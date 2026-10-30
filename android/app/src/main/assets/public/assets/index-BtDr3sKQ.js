@@ -1,2 +1,0 @@
-const __vite__mapDeps=(i,m=__vite__mapDeps,d=(m.f||(m.f=["./web-8BaSMH3w.js","./index-Q4eBrhIT.js"])))=>i.map(i=>d[i]);
-import{_ as t}from"./main-CEm-YBTm.js";import{r as a}from"./index-Q4eBrhIT.js";import"./no-internet-_z-ZxIQA.js";var i;(function(r){r.Dark="DARK",r.Default="DEFAULT",r.Light="LIGHT"})(i||(i={}));const m=a("NavigationBar",{web:()=>t(()=>import("./web-8BaSMH3w.js"),__vite__mapDeps([0,1]),import.meta.url).then(r=>new r.NavigationBarWeb)});export{m as NavigationBar,i as Style};

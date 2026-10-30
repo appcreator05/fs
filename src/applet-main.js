@@ -3011,17 +3011,80 @@ function initExoPlayer(videoEl, movie, activeServerIndex) {
         if (buf) buf.style.display = 'none';
     };
 
+    // Stall watchdog to prevent video from getting stuck/frozen on video encoding glitches
+    let exoStallWatchdogTimer = null;
+    let exoLastRecordedTime = -1;
+    let exoStallCount = 0;
+
+    function startExoWatchdog() {
+        if (exoStallWatchdogTimer) clearInterval(exoStallWatchdogTimer);
+        exoLastRecordedTime = videoEl.currentTime || 0;
+        exoStallCount = 0;
+
+        exoStallWatchdogTimer = setInterval(() => {
+            if (!videoEl || videoEl.paused || videoEl.ended) return;
+
+            const cur = videoEl.currentTime || 0;
+            // If playing but playback timestamp is stuck due to video encoding glitch
+            if (Math.abs(cur - exoLastRecordedTime) < 0.05 && videoEl.readyState >= 2) {
+                exoStallCount++;
+                if (exoStallCount >= 2) {
+                    // Stalled for 2+ seconds on bad keyframe/encoding: nudge forward past corrupt frame
+                    exoStallCount = 0;
+                    try {
+                        videoEl.currentTime = cur + 0.15;
+                        videoEl.play().catch(() => {});
+                    } catch (e) {}
+                }
+            } else {
+                exoLastRecordedTime = cur;
+                exoStallCount = 0;
+            }
+        }, 1100);
+    }
+
+    function stopExoWatchdog() {
+        if (exoStallWatchdogTimer) {
+            clearInterval(exoStallWatchdogTimer);
+            exoStallWatchdogTimer = null;
+        }
+    }
+
     // Video buffering & playback listeners
     videoEl.addEventListener('seeking', showBuffering);
-    videoEl.addEventListener('waiting', showBuffering);
+    videoEl.addEventListener('waiting', () => {
+        showBuffering();
+        // Gentle nudge after 3s if browser media pipeline gets stuck in waiting state
+        setTimeout(() => {
+            if (videoEl && !videoEl.paused && videoEl.readyState < 3) {
+                try {
+                    videoEl.currentTime += 0.1;
+                    videoEl.play().catch(() => {});
+                } catch (e) {}
+            }
+        }, 3000);
+    });
+    videoEl.addEventListener('stalled', () => {
+        showBuffering();
+        setTimeout(() => {
+            if (videoEl && !videoEl.paused) {
+                try {
+                    videoEl.currentTime += 0.1;
+                    videoEl.play().catch(() => {});
+                } catch (e) {}
+            }
+        }, 2500);
+    });
     videoEl.addEventListener('loadstart', showBuffering);
     videoEl.addEventListener('playing', () => {
         hideBuffering();
         updateExoPlayPauseButtons();
         resetExoControlsTimer(3200);
+        startExoWatchdog();
     });
     videoEl.addEventListener('pause', () => {
         updateExoPlayPauseButtons();
+        stopExoWatchdog();
         const overlay = document.getElementById('exoControlsOverlay');
         if (overlay) overlay.classList.remove('hidden-overlay');
     });
@@ -3063,14 +3126,24 @@ function initExoPlayer(videoEl, movie, activeServerIndex) {
 
     // Video completion triggers Auto Next
     videoEl.addEventListener('ended', () => {
+        stopExoWatchdog();
         updateExoPlayPauseButtons();
         handleVideoEnded();
     });
 
-    // Error handling
+    // Error handling with seamless Native ExoPlayer fallback on Android
     videoEl.addEventListener('error', (e) => {
         if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
         hideBuffering();
+        stopExoWatchdog();
+        if (window.Android && typeof window.Android.playInExoPlayer === 'function') {
+            const fallbackUrl = videoEl.currentSrc || (movie && (movie.video || movie.url));
+            if (fallbackUrl) {
+                showToast("Opening in Native ExoPlayer...");
+                window.Android.playInExoPlayer(fallbackUrl, movie.title || movie.name || 'Movie');
+                return;
+            }
+        }
         const errorBox = document.getElementById('playerStreamErrorNotice');
         if (errorBox) errorBox.style.display = 'flex';
     }, true);
@@ -3187,6 +3260,7 @@ function initExoPlayer(videoEl, movie, activeServerIndex) {
             videoEl.removeEventListener(event, handler);
         },
         destroy: () => {
+            stopExoWatchdog();
             if (exoControlsTimer) {
                 clearTimeout(exoControlsTimer);
                 exoControlsTimer = null;
@@ -4873,6 +4947,12 @@ function renderPlayerSection(movie, activeServerIndex = 0, preserveFullscreen = 
                                         <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor"><path d="M15 3l2.3 2.3-2.89 2.87 1.42 1.42L18.7 6.7 21 9V3h-6zM3 9l2.3-2.3 2.87 2.89 1.42-1.42L6.7 5.3 9 3H3v6zm6 12l-2.3-2.3 2.89-2.87-1.42-1.42L5.3 17.3 3 15v6h6zm12-6l-2.3 2.3-2.87-2.89-1.42 1.42 2.89 2.87L15 21h6v-6z"/></svg>
                                         <span class="exo-btn-label" id="exoResizeLabel">FIT</span>
                                     </button>
+                                    ${window.Android ? `
+                                    <button type="button" class="exo-btn" onclick="window.launchNativeExoPlayer('${escapeHtml(activeServer?.url || '')}', '${escapeHtml(movie.title || movie.name || 'Movie')}');" title="Play in Native ExoPlayer (AppCreator24 Engine)">
+                                        <svg viewBox="0 0 24 24" width="13" height="13" fill="#00d2ff"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z"/></svg>
+                                        <span class="exo-btn-label" style="color: #00d2ff; font-weight: 800;">EXO</span>
+                                    </button>
+                                    ` : ''}
                                     <button type="button" class="exo-btn" onclick="window.toggleExoSettings(event);" title="Playback Speed & Settings">
                                         <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>
                                     </button>
@@ -4885,6 +4965,16 @@ function renderPlayerSection(movie, activeServerIndex = 0, preserveFullscreen = 
                                     <span>ExoPlayer Settings</span>
                                     <button type="button" class="exo-settings-close" onclick="window.closeExoSettings(event);">&times;</button>
                                 </div>
+                                ${window.Android ? `
+                                <div class="exo-settings-group" style="padding-bottom: 8px; border-bottom: 1px solid rgba(255,255,255,0.08);">
+                                    <button type="button" onclick="window.launchNativeExoPlayer('${escapeHtml(activeServer?.url || '')}', '${escapeHtml(movie.title || movie.name || 'Movie')}');" style="width: 100%; background: rgba(0,210,255,0.12); border: 1px solid rgba(0,210,255,0.3); color: #00d2ff; padding: 9px 12px; border-radius: 8px; font-weight: 700; font-size: 13px; display: flex; align-items: center; justify-content: space-between; cursor: pointer;">
+                                        <span style="display: flex; align-items: center; gap: 6px;">
+                                            <i class="fa-solid fa-play"></i> Play in Native ExoPlayer
+                                        </span>
+                                        <span style="font-size: 10px; background: #00d2ff; color: #000; padding: 2px 6px; border-radius: 4px; font-weight: 900;">AppCreator24</span>
+                                    </button>
+                                </div>
+                                ` : ''}
                                 <div class="exo-settings-group">
                                     <label>Playback Speed</label>
                                     <div class="exo-speed-chips">

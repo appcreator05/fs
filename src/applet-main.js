@@ -3384,6 +3384,9 @@ window.handleThemeCommentClick = function() {
 
 function performOpenPlayerDirect(movie, preserveFullscreen = false) {
     if (!movie) return;
+    if (typeof addToWatchContinue === 'function') {
+        addToWatchContinue(movie);
+    }
 
     if (currentPlayingMovie !== movie) {
         window.currentActiveEpisodeIndex = 0;
@@ -3562,12 +3565,117 @@ async function verifyMovieLink(movie) {
     return { valid: true };
 }
 
+// ==================== WATCH CONTINUE SYSTEM ====================
+const WATCH_CONTINUE_KEY = 'vdosky_watch_continue_list';
+const MAX_WATCH_CONTINUE_ITEMS = 10;
+
+function getWatchContinueList() {
+    try {
+        const raw = localStorage.getItem(WATCH_CONTINUE_KEY);
+        if (!raw) return [];
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+            return parsed.filter(item => item && (item.title || item.name || item.id));
+        }
+    } catch (e) {
+        console.warn('Failed to parse Watch Continue list:', e);
+    }
+    return [];
+}
+
+function saveWatchContinueList(list) {
+    try {
+        localStorage.setItem(WATCH_CONTINUE_KEY, JSON.stringify(list.slice(0, MAX_WATCH_CONTINUE_ITEMS)));
+    } catch (e) {
+        console.warn('Failed to save Watch Continue list:', e);
+    }
+}
+
+function addToWatchContinue(movie) {
+    if (!movie) return;
+    try {
+        const currentList = getWatchContinueList();
+        const mTitle = (movie.title || movie.name || '').trim().toLowerCase();
+        const mId = movie.id ? String(movie.id) : null;
+
+        // Remove if already in list (so it can be moved to the front)
+        const filtered = currentList.filter(item => {
+            if (!item) return false;
+            if (mId && item.id && String(item.id) === mId) return false;
+            const itemTitle = (item.title || item.name || '').trim().toLowerCase();
+            if (mTitle && itemTitle && mTitle === itemTitle) return false;
+            return true;
+        });
+
+        // Create movie record to preserve properties
+        const itemRecord = {
+            id: movie.id || ('wc_' + Date.now()),
+            title: movie.title || movie.name || 'Untitled Post',
+            name: movie.name || movie.title || 'Untitled Post',
+            poster: movie.poster || movie.image || '',
+            image: movie.image || movie.poster || '',
+            rating: movie.rating || '4.8',
+            category: movie.category || 'General',
+            videoUrl: movie.videoUrl || '',
+            url: movie.url || '',
+            servers: Array.isArray(movie.servers) ? movie.servers : [],
+            episodes: movie.episodes || [],
+            cast: movie.cast || '',
+            desc: movie.desc || movie.description || '',
+            watchedAt: Date.now()
+        };
+
+        // Add newest opened post to the top (front)
+        filtered.unshift(itemRecord);
+
+        // Keep maximum 10 items (the 11th drops off automatically)
+        const updatedList = filtered.slice(0, MAX_WATCH_CONTINUE_ITEMS);
+        saveWatchContinueList(updatedList);
+
+        // Invalidate home cached HTML so fresh Watch Continue is shown upon return
+        homeCachedHTML = "";
+    } catch (e) {
+        console.warn('Error adding to Watch Continue:', e);
+    }
+}
+
+function removeFromWatchContinue(movieIdOrTitle, e) {
+    if (e) {
+        e.stopPropagation();
+        e.preventDefault();
+    }
+    try {
+        const currentList = getWatchContinueList();
+        const targetStr = String(movieIdOrTitle).trim().toLowerCase();
+        const updated = currentList.filter(item => {
+            if (!item) return false;
+            if (item.id && String(item.id).toLowerCase() === targetStr) return false;
+            const t = (item.title || item.name || '').trim().toLowerCase();
+            if (t && t === targetStr) return false;
+            return true;
+        });
+        saveWatchContinueList(updated);
+        homeCachedHTML = "";
+        if (!isPlayerView && !isInCategoryView && typeof renderContent === 'function') {
+            renderContent(allMovies);
+        }
+    } catch (err) {
+        console.warn('Error removing from Watch Continue:', err);
+    }
+}
+
+window.getWatchContinueList = getWatchContinueList;
+window.saveWatchContinueList = saveWatchContinueList;
+window.addToWatchContinue = addToWatchContinue;
+window.removeFromWatchContinue = removeFromWatchContinue;
+
 let pendingPlayerMovie = null;
 let pendingPlayerPreserveFullscreen = false;
 
 // Open Dedicated Player Section with Accurate Link Verification & Spring Loader
 window.openPlayer = async function(movie, preserveFullscreen = false) {
     if (!movie) return;
+    addToWatchContinue(movie);
     if (typeof window.stopGpsCamera === 'function') window.stopGpsCamera();
     isInGpsCameraView = false;
 
@@ -5472,14 +5580,8 @@ window.exitPlayerView = function() {
     } else if (isInCategoryView && currentCategoryName !== 'all') {
         window.filterAndDisplay(currentCategoryName, true);
     } else {
-        const container = document.getElementById('mainContainer');
-        if (!window.__isVipSubscribed && homeCachedHTML && container) {
-            container.innerHTML = homeCachedHTML;
-            rebindHomeCardClicks();
-        } else {
-            homeCachedHTML = "";
-            renderContent(allMovies);
-        }
+        homeCachedHTML = "";
+        renderContent(allMovies);
     }
 
     // Restore smooth scroll position
@@ -5520,47 +5622,70 @@ async function renderContent(movies) {
     if (!container) return;
     container.innerHTML = "";
 
-    // 1. Featured / Recently Added Section (Shows the latest added 8 movies at the very top)
-    const recentMovies = movies.slice(0, 8);
-    if (recentMovies.length > 0) {
-        const recentDiv = document.createElement('div');
-        recentDiv.style.marginBottom = "-25px";
-        recentDiv.innerHTML = `
+    // 1. Watch Continue Section (Replaces Recently Added: tracks user opened posts, max 10 items, newest at front, oldest drops off)
+    const watchContinueList = getWatchContinueList();
+    const wcDiv = document.createElement('div');
+    wcDiv.className = 'watch-continue-section';
+    wcDiv.style.marginBottom = "-25px";
+
+    if (watchContinueList.length > 0) {
+        wcDiv.innerHTML = `
             <div class="section-header">
                 <div class="section-title-wrapper">
-                    <div class="section-bar" style="background: linear-gradient(180deg, #ff3b30, #ff9500);"></div>
-                    <div class="section-title" style="color: #fff;"><i class="fa-solid fa-fire" style="color: #ff3b30; margin-right: 6px;"></i> Recently Added</div>
+                    <div class="section-bar" style="background: linear-gradient(180deg, #00d2ff, #0070f3);"></div>
+                    <div class="section-title" style="color: #fff;"><i class="fa-solid fa-play" style="color: #00d2ff; margin-right: 6px;"></i> Watch Continue</div>
+                </div>
+                <div style="margin-left: auto; display: flex; align-items: center; gap: 6px;">
+                    <span style="font-size: 11px; font-weight: 700; color: #00d2ff; background: rgba(0,210,255,0.12); border: 1px solid rgba(0,210,255,0.25); border-radius: 10px; padding: 2px 8px;">
+                        <i class="fa-solid fa-clock-rotate-left" style="font-size: 10px; margin-right: 4px;"></i>${watchContinueList.length}/10
+                    </span>
                 </div>
             </div>
             <div class="horizontal-scroll-container"></div>
         `;
 
-        container.appendChild(recentDiv);
-        const recentRow = recentDiv.querySelector('.horizontal-scroll-container');
+        container.appendChild(wcDiv);
+        const wcRow = wcDiv.querySelector('.horizontal-scroll-container');
 
-        for (let i = 0; i < recentMovies.length; i++) {
-            const m = recentMovies[i];
+        for (let i = 0; i < watchContinueList.length; i++) {
+            const m = watchContinueList[i];
             const card = document.createElement('div');
             card.className = 'movie-card';
-            const globalIndex = allMovies.indexOf(m);
-            card.dataset.movieIndex = globalIndex >= 0 ? globalIndex : i;
-            card.onclick = () => window.openPlayer(m);
+            card.style.position = 'relative';
 
-            const titleText = m.title || m.name || '';
+            // Resolve full movie object from allMovies if available
+            const fullMovie = (Array.isArray(allMovies) ? allMovies.find(am => {
+                if (!am) return false;
+                if (m.id && am.id && String(am.id) === String(m.id)) return true;
+                const t1 = (am.title || am.name || '').trim().toLowerCase();
+                const t2 = (m.title || m.name || '').trim().toLowerCase();
+                return t1 && t2 && t1 === t2;
+            }) : null) || m;
+
+            const globalIndex = Array.isArray(allMovies) ? allMovies.indexOf(fullMovie) : -1;
+            card.dataset.movieIndex = globalIndex >= 0 ? globalIndex : i;
+            card.onclick = () => window.openPlayer(fullMovie);
+
+            const titleText = m.title || m.name || 'Untitled Post';
             const isLong = titleText.length > 18;
             const isLatest = i === 0;
 
             card.innerHTML = `
-                <span class="rating-badge">${isLatest ? '<span style="color: #00ff88; font-weight: 700; margin-right: 4px;">NEW</span>' : ''}★ ${m.rating || '0.0'}</span>
+                <span class="rating-badge" style="background: rgba(0, 0, 0, 0.78); border: 1px solid rgba(0, 210, 255, 0.35);">
+                    <i class="fa-solid fa-circle-play" style="color: #00d2ff; font-size: 9px; margin-right: 4px;"></i>${isLatest ? '<span style="color: #00ff88; font-weight: 700; margin-right: 3px;">RESUME</span>' : 'WATCH'} ★ ${m.rating || '4.8'}
+                </span>
+                <button type="button" class="wc-remove-btn" onclick="window.removeFromWatchContinue('${escapeHtml(String(m.id || titleText))}', event);" title="Remove from Watch Continue" style="position: absolute; top: 6px; right: 6px; z-index: 10; width: 22px; height: 22px; border-radius: 50%; background: rgba(0,0,0,0.7); border: 1px solid rgba(255,255,255,0.3); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 10px; cursor: pointer;">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
                 <img src="${m.poster || m.image || ''}" loading="lazy" decoding="async">
                 <div class="movie-title-container">
-                    <div class="movie-title ${isLong ? 'marquee-title' : ''}">${titleText}</div>
+                    <div class="movie-title ${isLong ? 'marquee-title' : ''}">${escapeHtml(titleText)}</div>
                 </div>
             `;
-            recentRow.appendChild(card);
+            wcRow.appendChild(card);
 
-            if (m.poster) {
-                getImage(m.poster).then(imgUrl => {
+            if (m.poster || m.image) {
+                getImage(m.poster || m.image).then(imgUrl => {
                     if (imgUrl) {
                         const img = card.querySelector('img');
                         if (img) img.src = imgUrl;
@@ -5568,6 +5693,24 @@ async function renderContent(movies) {
                 }).catch(() => {});
             }
         }
+    } else {
+        // Subtle hint when user has not opened any post yet
+        wcDiv.innerHTML = `
+            <div class="section-header">
+                <div class="section-title-wrapper">
+                    <div class="section-bar" style="background: linear-gradient(180deg, #00d2ff, #0070f3);"></div>
+                    <div class="section-title" style="color: #fff;"><i class="fa-solid fa-play" style="color: #00d2ff; margin-right: 6px;"></i> Watch Continue</div>
+                </div>
+            </div>
+            <div class="watch-continue-empty" style="padding: 14px 16px; margin: 4px 12px 18px 12px; background: rgba(255,255,255,0.03); border: 1px dashed rgba(255,255,255,0.14); border-radius: 12px; display: flex; align-items: center; gap: 12px; color: #8b949e;">
+                <i class="fa-solid fa-clock-rotate-left" style="font-size: 22px; color: #00d2ff; flex-shrink: 0;"></i>
+                <div style="text-align: left;">
+                    <div style="font-size: 13px; font-weight: 600; color: #fff; margin-bottom: 2px;">Your Watch Continue is empty</div>
+                    <div style="font-size: 11.5px; color: #80868b;">Tap any post below to start watching. Up to 10 recently opened posts will appear here.</div>
+                </div>
+            </div>
+        `;
+        container.appendChild(wcDiv);
     }
 
     const categories = [...new Set(movies.map(m => m.category).filter(Boolean))];

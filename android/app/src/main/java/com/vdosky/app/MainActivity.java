@@ -333,6 +333,11 @@ public class MainActivity extends BridgeActivity {
                     settings.setSupportZoom(true);
                     settings.setBuiltInZoomControls(true);
                     settings.setDisplayZoomControls(false);
+                    settings.setMediaPlaybackRequiresUserGesture(false);
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                        settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
+                    }
+                    webView.setLayerType(View.LAYER_TYPE_HARDWARE, null);
 
                     // WebChromeClient: grant camera & geolocation permissions for HTML5/WebRTC and handle HTML file inputs
                     webView.setWebChromeClient(new WebChromeClient() {
@@ -525,16 +530,19 @@ public class MainActivity extends BridgeActivity {
             if (videoUrl == null || videoUrl.trim().isEmpty()) return;
             runOnUiThread(() -> {
                 try {
-                    Intent intent = new Intent(Intent.ACTION_VIEW);
-                    intent.setDataAndType(Uri.parse(videoUrl.trim()), "video/*");
-                    intent.putExtra(Intent.EXTRA_TITLE, title != null ? title : "Video");
-                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                    startActivity(Intent.createChooser(intent, "Play in ExoPlayer / Video Player"));
+                    Intent intent = new Intent(MainActivity.this, ExoPlayerActivity.class);
+                    intent.putExtra("VIDEO_URL", videoUrl.trim());
+                    intent.putExtra("VIDEO_TITLE", title != null ? title : "Video");
+                    startActivity(intent);
                 } catch (Exception e) {
                     try {
-                        openExternalUrl(videoUrl);
+                        Intent fallback = new Intent(Intent.ACTION_VIEW);
+                        fallback.setDataAndType(Uri.parse(videoUrl.trim()), "video/*");
+                        fallback.putExtra(Intent.EXTRA_TITLE, title != null ? title : "Video");
+                        fallback.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                        startActivity(Intent.createChooser(fallback, "Play Video"));
                     } catch (Exception ex) {
-                        ex.printStackTrace();
+                        openExternalUrl(videoUrl);
                     }
                 }
             });

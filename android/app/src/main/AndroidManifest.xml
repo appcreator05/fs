@@ -72,6 +72,15 @@
 
         </activity>
 
+        <!-- Real Native Google ExoPlayer Activity -->
+        <activity
+            android:name=".ExoPlayerActivity"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode|navigation|density"
+            android:label="ExoPlayer"
+            android:theme="@style/AppTheme.NoActionBarLaunch"
+            android:screenOrientation="sensorLandscape"
+            android:exported="false" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

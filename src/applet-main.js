@@ -2662,11 +2662,15 @@ function updateExoPlayPauseButtons() {
 
     const mainPlayIcon = document.getElementById('exoMainPlayIcon');
     if (mainPlayIcon) {
-        mainPlayIcon.className = isPaused ? 'fa-solid fa-play' : 'fa-solid fa-pause';
+        mainPlayIcon.innerHTML = isPaused
+            ? `<svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>`
+            : `<svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>`;
     }
     const smallPlayIcon = document.getElementById('exoPlayPauseSmallIcon');
     if (smallPlayIcon) {
-        smallPlayIcon.className = isPaused ? 'fa-solid fa-play' : 'fa-solid fa-pause';
+        smallPlayIcon.innerHTML = isPaused
+            ? `<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>`
+            : `<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>`;
     }
 }
 window.updateExoPlayPauseButtons = updateExoPlayPauseButtons;
@@ -2700,7 +2704,9 @@ function toggleExoMute() {
     videoEl.muted = !videoEl.muted;
     const muteIcon = document.getElementById('exoMuteIcon');
     if (muteIcon) {
-        muteIcon.className = videoEl.muted ? 'fa-solid fa-volume-xmark' : 'fa-solid fa-volume-high';
+        muteIcon.innerHTML = videoEl.muted
+            ? `<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/></svg>`
+            : `<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>`;
     }
     resetExoControlsTimer(3000);
 }
@@ -4820,7 +4826,7 @@ function renderPlayerSection(movie, activeServerIndex = 0, preserveFullscreen = 
                     </button>
                 ` : `
                     <div class="exoplayer-container" id="exoPlayerContainer">
-                        <video id="vdoSkyExoVideo" class="exoplayer-video" playsinline preload="metadata" poster="${movie.poster || ''}">
+                        <video id="vdoSkyExoVideo" class="exoplayer-video" playsinline webkit-playsinline preload="auto" crossorigin="anonymous" poster="${movie.poster || ''}">
                             <source src="${activeServer.url}" type="video/mp4">
                             Your browser does not support HTML5 video.
                         </video>
@@ -4833,11 +4839,15 @@ function renderPlayerSection(movie, activeServerIndex = 0, preserveFullscreen = 
 
                         <!-- Ripple Indicators for Double-Tap Seek -->
                         <div class="exo-skip-anim left" id="exoSkipLeftAnim">
-                            <div class="exo-skip-icon"><i class="fa-solid fa-rotate-left"></i></div>
+                            <div class="exo-skip-icon">
+                                <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z"/></svg>
+                            </div>
                             <div class="exo-skip-text">-10s</div>
                         </div>
                         <div class="exo-skip-anim right" id="exoSkipRightAnim">
-                            <div class="exo-skip-icon"><i class="fa-solid fa-rotate-right"></i></div>
+                            <div class="exo-skip-icon">
+                                <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M12 5V1l5 5-5 5V7c-3.31 0-6 2.69-6 6s2.69 6 6 6 6-2.69 6-6h2c0 4.42-3.58 8-8 8s-8-3.58-8-8 3.58-8 8-8z"/></svg>
+                            </div>
                             <div class="exo-skip-text">+10s</div>
                         </div>
 
@@ -4853,18 +4863,23 @@ function renderPlayerSection(movie, activeServerIndex = 0, preserveFullscreen = 
                             <div class="exo-top-bar">
                                 <div class="exo-title-wrap">
                                     <span class="exo-movie-title">${escapeHtml(movie.title || movie.name || 'Playing Stream')}</span>
-                                    <span class="exo-badge"><i class="fa-solid fa-play"></i> ExoPlayer</span>
+                                    <span class="exo-badge" style="display: inline-flex; align-items: center; gap: 4px;">
+                                        <svg viewBox="0 0 24 24" width="11" height="11" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+                                        ExoPlayer
+                                    </span>
                                 </div>
                                 <div class="exo-top-actions">
                                     <button type="button" class="exo-btn" id="exoResizeBtn" onclick="window.cycleExoResizeMode();" title="Video Aspect Ratio (Fit / Zoom / Stretch)">
-                                        <i class="fa-solid fa-expand"></i> <span class="exo-btn-label" id="exoResizeLabel">FIT</span>
+                                        <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor"><path d="M15 3l2.3 2.3-2.89 2.87 1.42 1.42L18.7 6.7 21 9V3h-6zM3 9l2.3-2.3 2.87 2.89 1.42-1.42L6.7 5.3 9 3H3v6zm6 12l-2.3-2.3 2.89-2.87-1.42-1.42L5.3 17.3 3 15v6h6zm12-6l-2.3 2.3-2.87-2.89-1.42 1.42 2.89 2.87L15 21h6v-6z"/></svg>
+                                        <span class="exo-btn-label" id="exoResizeLabel">FIT</span>
                                     </button>
                                     <button type="button" class="exo-btn" onclick="window.toggleExoSettings(event);" title="Playback Speed & Settings">
-                                        <i class="fa-solid fa-gear"></i>
+                                        <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>
                                     </button>
                                     ${window.Android && typeof window.Android.playInExoPlayer === 'function' ? `
-                                        <button type="button" class="exo-btn exo-native-btn" data-url="${encodeURIComponent(activeServer.url || '')}" data-title="${encodeURIComponent(movie.title || movie.name || '')}" onclick="window.launchNativeExoPlayer(decodeURIComponent(this.dataset.url), decodeURIComponent(this.dataset.title));" title="Open in Native Android ExoPlayer App">
-                                            <i class="fa-solid fa-mobile-screen"></i> <span>Native App</span>
+                                        <button type="button" class="exo-btn exo-native-btn" data-url="${encodeURIComponent(activeServer.url || '')}" data-title="${encodeURIComponent(movie.title || movie.name || '')}" onclick="window.launchNativeExoPlayer(decodeURIComponent(this.dataset.url), decodeURIComponent(this.dataset.title));" title="Play in Native ExoPlayer (Hardware Accelerated)" style="background: linear-gradient(135deg, #00c853, #009624); color: #fff; font-weight: 700; border: none; padding: 4px 10px; border-radius: 8px; display: inline-flex; align-items: center; gap: 5px; box-shadow: 0 2px 8px rgba(0,200,83,0.35);">
+                                            <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor"><path d="M7 2v11h3v9l7-12h-4l4-8z"/></svg>
+                                            <span>ExoPlayer HD</span>
                                         </button>
                                     ` : ''}
                                 </div>
@@ -4873,7 +4888,7 @@ function renderPlayerSection(movie, activeServerIndex = 0, preserveFullscreen = 
                             <!-- Settings Menu Popover -->
                             <div class="exo-settings-menu" id="exoSettingsMenu" style="display: none;" onclick="event.stopPropagation();">
                                 <div class="exo-settings-header">
-                                    <span><i class="fa-solid fa-sliders"></i> ExoPlayer Settings</span>
+                                    <span>ExoPlayer Settings</span>
                                     <button type="button" class="exo-settings-close" onclick="window.closeExoSettings(event);">&times;</button>
                                 </div>
                                 <div class="exo-settings-group">
@@ -4898,14 +4913,16 @@ function renderPlayerSection(movie, activeServerIndex = 0, preserveFullscreen = 
                             <!-- Center Controller: Rewind 10s, Center Play/Pause, Fast Forward 10s -->
                             <div class="exo-center-bar">
                                 <button type="button" class="exo-action-circle" onclick="window.exoSeekDelta(-10);" title="Rewind 10 seconds">
-                                    <i class="fa-solid fa-rotate-left"></i>
+                                    <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z"/></svg>
                                     <span class="exo-seek-sub">-10</span>
                                 </button>
                                 <button type="button" class="exo-action-circle main-play" id="exoMainPlayBtn" onclick="window.toggleExoPlay();" title="Play / Pause">
-                                    <i class="fa-solid fa-play" id="exoMainPlayIcon"></i>
+                                    <span id="exoMainPlayIcon">
+                                        <svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+                                    </span>
                                 </button>
                                 <button type="button" class="exo-action-circle" onclick="window.exoSeekDelta(10);" title="Fast Forward 10 seconds">
-                                    <i class="fa-solid fa-rotate-right"></i>
+                                    <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M12 5V1l5 5-5 5V7c-3.31 0-6 2.69-6 6s2.69 6 6 6 6-2.69 6-6h2c0 4.42-3.58 8-8 8s-8-3.58-8-8 3.58-8 8-8z"/></svg>
                                     <span class="exo-seek-sub">+10</span>
                                 </button>
                             </div>
@@ -4924,10 +4941,14 @@ function renderPlayerSection(movie, activeServerIndex = 0, preserveFullscreen = 
                                 <div class="exo-bottom-actions">
                                     <div class="exo-bottom-left">
                                         <button type="button" class="exo-control-btn" id="exoPlayPauseSmallBtn" onclick="window.toggleExoPlay();" title="Play / Pause">
-                                            <i class="fa-solid fa-play" id="exoPlayPauseSmallIcon"></i>
+                                            <span id="exoPlayPauseSmallIcon">
+                                                <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+                                            </span>
                                         </button>
                                         <button type="button" class="exo-control-btn" id="exoMuteBtn" onclick="window.toggleExoMute();" title="Mute / Unmute">
-                                            <i class="fa-solid fa-volume-high" id="exoMuteIcon"></i>
+                                            <span id="exoMuteIcon">
+                                                <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
+                                            </span>
                                         </button>
                                         <div class="exo-time-display">
                                             <span id="exoCurrentTime">00:00</span>
@@ -4938,7 +4959,7 @@ function renderPlayerSection(movie, activeServerIndex = 0, preserveFullscreen = 
 
                                     <div class="exo-bottom-right">
                                         <button type="button" class="exo-control-btn" onclick="window.triggerFullscreenPlayer();" title="Toggle Fullscreen">
-                                            <i class="fa-solid fa-expand" id="exoFullscreenIcon"></i>
+                                            <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>
                                         </button>
                                     </div>
                                 </div>
@@ -4959,6 +4980,16 @@ function renderPlayerSection(movie, activeServerIndex = 0, preserveFullscreen = 
                     </div>
                 `}
             </div>
+
+            ${window.Android && typeof window.Android.playInExoPlayer === 'function' ? `
+            <!-- Native Android ExoPlayer Direct Stream Launch Button -->
+            <div style="margin: 10px 0 14px 0;">
+                <button type="button" class="native-exoplayer-launch-bar" data-url="${encodeURIComponent(activeServer.url || '')}" data-title="${encodeURIComponent(movie.title || movie.name || '')}" onclick="window.launchNativeExoPlayer(decodeURIComponent(this.dataset.url), decodeURIComponent(this.dataset.title));" style="width: 100%; background: linear-gradient(135deg, #00c853, #007e33); color: #fff; font-weight: bold; font-size: 13.5px; border: none; padding: 11px 16px; border-radius: 10px; display: flex; align-items: center; justify-content: center; gap: 8px; cursor: pointer; box-shadow: 0 4px 15px rgba(0,200,83,0.35);">
+                    <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z"/></svg>
+                    Play in Native ExoPlayer (Ultra Smooth HD)
+                </button>
+            </div>
+            ` : ''}
 
 
             ${movie.episodes && movie.episodes.length > 0 ? `

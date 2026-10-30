@@ -521,6 +521,26 @@ public class MainActivity extends BridgeActivity {
         }
 
         @JavascriptInterface
+        public void playInExoPlayer(final String videoUrl, final String title) {
+            if (videoUrl == null || videoUrl.trim().isEmpty()) return;
+            runOnUiThread(() -> {
+                try {
+                    Intent intent = new Intent(Intent.ACTION_VIEW);
+                    intent.setDataAndType(Uri.parse(videoUrl.trim()), "video/*");
+                    intent.putExtra(Intent.EXTRA_TITLE, title != null ? title : "Video");
+                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    startActivity(Intent.createChooser(intent, "Play in ExoPlayer / Video Player"));
+                } catch (Exception e) {
+                    try {
+                        openExternalUrl(videoUrl);
+                    } catch (Exception ex) {
+                        ex.printStackTrace();
+                    }
+                }
+            });
+        }
+
+        @JavascriptInterface
         public void trackImpression(String adId) {
         }
 

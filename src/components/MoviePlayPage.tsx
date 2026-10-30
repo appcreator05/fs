@@ -1184,7 +1184,7 @@ export const MoviePlayPage: React.FC<MoviePlayPageProps> = ({
                           : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
                       }`}
                     >
-                      {isYouTube ? 'YouTube Supported Player' : movie.videoType === 'video' ? 'Worker CDN 1080p' : 'Plyr Direct 1080p'}
+                      {isYouTube ? 'YouTube Supported Player' : movie.videoType === 'video' ? 'ExoPlayer CDN 1080p' : 'ExoPlayer Ultra HD'}
                     </span>
                   </div>
 

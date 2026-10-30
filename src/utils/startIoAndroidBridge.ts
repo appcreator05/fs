@@ -122,3 +122,14 @@ export function openUrlInChrome(url: string) {
     } catch (err) {}
   }
 }
+
+export function openInNativeExoPlayer(url: string, title: string = 'Video Stream'): boolean {
+  if (!url) return false;
+  if (typeof window !== 'undefined' && window.Android && typeof window.Android.playInExoPlayer === 'function') {
+    try {
+      window.Android.playInExoPlayer(url, title);
+      return true;
+    } catch {}
+  }
+  return false;
+}

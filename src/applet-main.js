@@ -32,6 +32,20 @@ if (typeof window !== 'undefined') {
     };
 }
 
+// Safe HTML escaping helper
+function escapeHtml(str) {
+    if (str === null || str === undefined) return '';
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+if (typeof window !== 'undefined') {
+    window.escapeHtml = escapeHtml;
+}
+
 let isInSubscriptionView = false;
 let homeCachedHTML = "";
 let adRefreshTimer = null;
@@ -682,7 +696,8 @@ async function fetchMovies() {
     }
 }
 
-let currentPlyrInstance = null;
+let currentExoPlayer = null;
+let currentPlyrInstance = null; // Backwards-compatible alias for currentExoPlayer
 let currentActiveServerIndex = 0;
 let currentYtPlayerInstance = null;
 let autoNextTimer = null;
@@ -712,7 +727,7 @@ window.addEventListener('message', (event) => {
     } catch (e) {}
 });
 
-function destroyCurrentPlyr(preserveFullscreen = false) {
+function destroyCurrentExoPlayer(preserveFullscreen = false) {
     if (typeof stopYtTimelineSync === 'function') {
         stopYtTimelineSync();
     }
@@ -739,15 +754,28 @@ function destroyCurrentPlyr(preserveFullscreen = false) {
         } catch (e) {}
         currentYtPlayerInstance = null;
     }
-    if (currentPlyrInstance) {
+    if (currentExoPlayer) {
         try {
-            currentPlyrInstance.destroy();
+            if (typeof currentExoPlayer.destroy === 'function') {
+                currentExoPlayer.destroy();
+            }
         } catch (e) {
-            console.warn("Error destroying Plyr instance:", e);
+            console.warn("Error destroying ExoPlayer instance:", e);
         }
-        currentPlyrInstance = null;
+        currentExoPlayer = null;
     }
+    if (currentPlyrInstance && currentPlyrInstance !== currentExoPlayer) {
+        try {
+            if (typeof currentPlyrInstance.destroy === 'function') {
+                currentPlyrInstance.destroy();
+            }
+        } catch (e) {}
+    }
+    currentPlyrInstance = null;
 }
+const destroyCurrentPlyr = destroyCurrentExoPlayer;
+window.destroyCurrentExoPlayer = destroyCurrentExoPlayer;
+window.destroyCurrentPlyr = destroyCurrentPlyr;
 
 function getNextPlayableItem() {
     if (!currentPlayingMovie) return null;
@@ -1002,8 +1030,8 @@ window.playNextVideo = function(immediate = false) {
         return;
     }
 
-    // Seamless in-place transition for Plyr player (Worker stream, direct mp4, Drive ID)
-    const currentPlyrVideo = document.getElementById('vdoSkyPlyr');
+    // Seamless in-place transition for ExoPlayer player (Worker stream, direct mp4, Drive ID)
+    const currentPlyrVideo = document.getElementById('vdoSkyExoVideo') || document.getElementById('vdoSkyPlyr');
     const isNextGDrive = (sourceInfo.type === 'gdrive');
     const isNextPlyr = (sourceInfo.type === 'video' || sourceInfo.type === 'drc') && !isNextYt && !isNextGDrive;
 
@@ -2548,229 +2576,604 @@ window.addEventListener('orientationchange', () => {
     }, 200);
 });
 
-// Initialize Plyr player on HTML5 video element
-function initPlyrPlayer(videoEl, movie, activeServerIndex) {
-    destroyCurrentPlyr();
-    if (!videoEl) return;
+// ==========================================
+// GOOGLE EXOPLAYER NATIVE WEB CONTROLLER
+// ==========================================
+let exoControlsTimer = null;
+let exoIsScrubbing = false;
+let exoIsScreenLocked = false;
+let exoCurrentResizeMode = 'contain'; // 'contain' (Fit) | 'cover' (Fill/Zoom) | 'fill' (Stretch)
+let exoLastTapTimeLeft = 0;
+let exoLastTapTimeRight = 0;
+let exoSingleTapTimeout = null;
 
-    const PlyrConstructor = window.Plyr;
-    if (!PlyrConstructor) {
-        console.warn("Plyr not found on window, fallback to native video controls");
-        videoEl.controls = true;
-        return;
+function resetExoControlsTimer(delay = 3200) {
+    if (exoControlsTimer) {
+        clearTimeout(exoControlsTimer);
+        exoControlsTimer = null;
     }
+    const overlay = document.getElementById('exoControlsOverlay');
+    if (!overlay || exoIsScreenLocked) return;
 
-    try {
-        currentPlyrInstance = new PlyrConstructor(videoEl, {
-            controls: [
-                'play-large',
-                'rewind',
-                'play',
-                'fast-forward',
-                'progress',
-                'current-time',
-                'duration',
-                'mute',
-                'volume',
-                'captions',
-                'fullscreen'
-            ],
-            settings: [],
-            seekTime: 10,
-            keyboard: { focused: true, global: false },
-            tooltips: { controls: true, seek: true },
-            fullscreen: { enabled: true, fallback: true, iosNative: true }
-        });
+    overlay.classList.remove('hidden-overlay');
 
-        // Intercept user click on Plyr's fullscreen icon button during user activation
-        currentPlyrInstance.on('ready', () => {
-            const container = currentPlyrInstance.elements.container;
-            if (container) {
-                container.style.position = 'relative';
-
-                // Inject central buffering spinner directly inside Plyr container (visible in normal & fullscreen)
-                let bufferOverlay = container.querySelector('.plyr-buffering-overlay');
-                if (!bufferOverlay) {
-                    bufferOverlay = document.createElement('div');
-                    bufferOverlay.className = 'plyr-buffering-overlay';
-                    bufferOverlay.style.display = 'none';
-                    bufferOverlay.innerHTML = `
-                        <div class="plyr-buffer-spinner-ring"></div>
-                        <span class="plyr-buffer-text">Buffering Stream...</span>
-                    `;
-                    container.appendChild(bufferOverlay);
-                }
-
-                const showBuffering = () => {
-                    if (bufferOverlay) bufferOverlay.style.display = 'flex';
-                };
-                const hideBuffering = () => {
-                    if (bufferOverlay) bufferOverlay.style.display = 'none';
-                };
-
-                // Plyr seek & buffering events
-                currentPlyrInstance.on('seeking', showBuffering);
-                currentPlyrInstance.on('waiting', showBuffering);
-                currentPlyrInstance.on('loadstart', showBuffering);
-                currentPlyrInstance.on('playing', hideBuffering);
-                currentPlyrInstance.on('canplay', hideBuffering);
-                currentPlyrInstance.on('canplaythrough', hideBuffering);
-                currentPlyrInstance.on('seeked', () => {
-                    setTimeout(() => {
-                        if (videoEl.readyState >= 3 && !videoEl.seeking) {
-                            hideBuffering();
-                        }
-                    }, 200);
-                });
-
-                // Direct timeline range slider clicks & drags
-                const seekRange = container.querySelector('[data-plyr="seek"]');
-                if (seekRange) {
-                    seekRange.addEventListener('pointerdown', showBuffering);
-                    seekRange.addEventListener('mousedown', showBuffering);
-                    seekRange.addEventListener('touchstart', showBuffering);
-                    seekRange.addEventListener('input', showBuffering);
-                    seekRange.addEventListener('change', showBuffering);
-                }
-
-                // Rewind / Fast-forward buttons
-                const rewindBtn = container.querySelector('[data-plyr="rewind"]');
-                if (rewindBtn) rewindBtn.addEventListener('click', showBuffering);
-                const fastFwdBtn = container.querySelector('[data-plyr="fast-forward"]');
-                if (fastFwdBtn) fastFwdBtn.addEventListener('click', showBuffering);
-
-                container.addEventListener('click', (e) => {
-                    const btn = e.target.closest('[data-plyr="fullscreen"]');
-                    if (btn) {
-                        const isCurrentlyFs = !!(
-                            (currentPlyrInstance && currentPlyrInstance.fullscreen && currentPlyrInstance.fullscreen.active) ||
-                            document.fullscreenElement ||
-                            document.webkitFullscreenElement
-                        );
-                        if (!isCurrentlyFs) {
-                            const box = document.getElementById('activePlayerBox');
-                            if (box) box.classList.add('is-fullscreen');
-                            lockLandscapeOrientation();
-                            updateFullscreenButtonState(true);
-                        } else {
-                            const box = document.getElementById('activePlayerBox');
-                            if (box) {
-                                box.classList.remove('is-fullscreen');
-                                box.classList.remove('plyr-force-landscape');
-                            }
-                            if (container) {
-                                container.classList.remove('plyr-force-landscape');
-                            }
-                            unlockScreenOrientation();
-                            updateFullscreenButtonState(false);
-                        }
-                    }
-                }, true);
+    const videoEl = document.getElementById('vdoSkyExoVideo') || (currentExoPlayer && currentExoPlayer.videoEl);
+    if (videoEl && !videoEl.paused && !videoEl.ended) {
+        exoControlsTimer = setTimeout(() => {
+            if (!exoIsScrubbing && !exoIsScreenLocked) {
+                overlay.classList.add('hidden-overlay');
+                const settingsMenu = document.getElementById('exoSettingsMenu');
+                if (settingsMenu) settingsMenu.style.display = 'none';
             }
-
-            // Attempt autoplay smoothly
-            try {
-                const playPromise = currentPlyrInstance.play();
-                if (playPromise && typeof playPromise.catch === 'function') {
-                    playPromise.catch(() => {
-                        // Expected when browser blocks unmuted autoplay
-                    });
-                }
-            } catch (e) {}
-        });
-
-        // Native video listeners for buffering
-        videoEl.addEventListener('seeking', () => {
-            const overlay = currentPlyrInstance?.elements?.container?.querySelector('.plyr-buffering-overlay');
-            if (overlay) overlay.style.display = 'flex';
-        });
-        videoEl.addEventListener('waiting', () => {
-            const overlay = currentPlyrInstance?.elements?.container?.querySelector('.plyr-buffering-overlay');
-            if (overlay) overlay.style.display = 'flex';
-        });
-        videoEl.addEventListener('stalled', () => {
-            const overlay = currentPlyrInstance?.elements?.container?.querySelector('.plyr-buffering-overlay');
-            if (overlay) overlay.style.display = 'flex';
-        });
-        videoEl.addEventListener('playing', () => {
-            const overlay = currentPlyrInstance?.elements?.container?.querySelector('.plyr-buffering-overlay');
-            if (overlay) overlay.style.display = 'none';
-        });
-        videoEl.addEventListener('canplay', () => {
-            const overlay = currentPlyrInstance?.elements?.container?.querySelector('.plyr-buffering-overlay');
-            if (overlay) overlay.style.display = 'none';
-        });
-
-        // Lock landscape on Plyr fullscreen event
-        currentPlyrInstance.on('enterfullscreen', () => {
-            const box = document.getElementById('activePlayerBox');
-            if (box) box.classList.add('is-fullscreen');
-            lockLandscapeOrientation();
-            updateFullscreenButtonState(true);
-        });
-
-        // Restore orientation and exit fullscreen cleanly on Plyr exit fullscreen
-        currentPlyrInstance.on('exitfullscreen', () => {
-            if (isAutoNextTransitioning || wasFullscreenBeforeNext) {
-                return;
-            }
-            const box = document.getElementById('activePlayerBox');
-            if (box) {
-                box.classList.remove('is-fullscreen');
-                box.classList.remove('plyr-force-landscape');
-            }
-            const container = currentPlyrInstance?.elements?.container;
-            if (container) {
-                container.classList.remove('plyr-force-landscape');
-            }
-            unlockScreenOrientation();
-            updateFullscreenButtonState(false);
-        });
-
-        // Native iOS & WebKit video fullscreen handlers
-        videoEl.addEventListener('webkitbeginfullscreen', () => {
-            const box = document.getElementById('activePlayerBox');
-            if (box) box.classList.add('is-fullscreen');
-            lockLandscapeOrientation();
-            updateFullscreenButtonState(true);
-        });
-        videoEl.addEventListener('webkitendfullscreen', () => {
-            if (isAutoNextTransitioning || wasFullscreenBeforeNext) {
-                return;
-            }
-            const box = document.getElementById('activePlayerBox');
-            if (box) {
-                box.classList.remove('is-fullscreen');
-                box.classList.remove('plyr-force-landscape');
-            }
-            const container = currentPlyrInstance?.elements?.container;
-            if (container) {
-                container.classList.remove('plyr-force-landscape');
-            }
-            unlockScreenOrientation();
-            updateFullscreenButtonState(false);
-        });
-
-        // Video completion triggers Auto Next
-        currentPlyrInstance.on('ended', () => {
-            handleVideoEnded();
-        });
-        videoEl.addEventListener('ended', () => {
-            handleVideoEnded();
-        });
-
-        // Listen for errors to prompt user to switch stream server (capture phase catches <source> errors too)
-        videoEl.addEventListener('error', (e) => {
-            if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
-            const errorBox = document.getElementById('playerStreamErrorNotice');
-            if (errorBox) errorBox.style.display = 'flex';
-        }, true);
-
-    } catch (err) {
-        console.warn("Failed to initialize Plyr, using native controls:", err);
-        videoEl.controls = true;
+        }, delay);
     }
 }
+window.resetExoControlsTimer = resetExoControlsTimer;
+
+function toggleExoPlay() {
+    const videoEl = document.getElementById('vdoSkyExoVideo') || (currentExoPlayer && currentExoPlayer.videoEl);
+    if (!videoEl) return;
+    if (videoEl.paused || videoEl.ended) {
+        videoEl.play().catch(() => {});
+        resetExoControlsTimer(3000);
+    } else {
+        videoEl.pause();
+        const overlay = document.getElementById('exoControlsOverlay');
+        if (overlay) overlay.classList.remove('hidden-overlay');
+    }
+    updateExoPlayPauseButtons();
+}
+window.toggleExoPlay = toggleExoPlay;
+
+function updateExoPlayPauseButtons() {
+    const videoEl = document.getElementById('vdoSkyExoVideo') || (currentExoPlayer && currentExoPlayer.videoEl);
+    const isPaused = !videoEl || videoEl.paused || videoEl.ended;
+
+    const mainPlayIcon = document.getElementById('exoMainPlayIcon');
+    if (mainPlayIcon) {
+        mainPlayIcon.className = isPaused ? 'fa-solid fa-play' : 'fa-solid fa-pause';
+    }
+    const smallPlayIcon = document.getElementById('exoPlayPauseSmallIcon');
+    if (smallPlayIcon) {
+        smallPlayIcon.className = isPaused ? 'fa-solid fa-play' : 'fa-solid fa-pause';
+    }
+}
+window.updateExoPlayPauseButtons = updateExoPlayPauseButtons;
+
+function exoSeekDelta(deltaSeconds) {
+    const videoEl = document.getElementById('vdoSkyExoVideo') || (currentExoPlayer && currentExoPlayer.videoEl);
+    if (!videoEl) return;
+    const current = videoEl.currentTime || 0;
+    const dur = videoEl.duration || 0;
+    const target = Math.max(0, Math.min(dur || 999999, current + deltaSeconds));
+    videoEl.currentTime = target;
+    syncExoTimeline();
+    resetExoControlsTimer(3000);
+
+    // Trigger visual skip feedback animation
+    const animEl = deltaSeconds > 0 ? document.getElementById('exoSkipRightAnim') : document.getElementById('exoSkipLeftAnim');
+    if (animEl) {
+        animEl.classList.remove('active');
+        void animEl.offsetWidth; // Force DOM reflow to restart CSS animation
+        animEl.classList.add('active');
+        setTimeout(() => {
+            animEl.classList.remove('active');
+        }, 650);
+    }
+}
+window.exoSeekDelta = exoSeekDelta;
+
+function toggleExoMute() {
+    const videoEl = document.getElementById('vdoSkyExoVideo') || (currentExoPlayer && currentExoPlayer.videoEl);
+    if (!videoEl) return;
+    videoEl.muted = !videoEl.muted;
+    const muteIcon = document.getElementById('exoMuteIcon');
+    if (muteIcon) {
+        muteIcon.className = videoEl.muted ? 'fa-solid fa-volume-xmark' : 'fa-solid fa-volume-high';
+    }
+    resetExoControlsTimer(3000);
+}
+window.toggleExoMute = toggleExoMute;
+
+function setExoSpeed(rate) {
+    const videoEl = document.getElementById('vdoSkyExoVideo') || (currentExoPlayer && currentExoPlayer.videoEl);
+    if (!videoEl) return;
+    videoEl.playbackRate = Number(rate) || 1;
+    document.querySelectorAll('.exo-speed-chip').forEach(btn => {
+        const speedVal = parseFloat(btn.getAttribute('data-speed'));
+        btn.classList.toggle('active', speedVal === rate);
+    });
+    showToast(`Speed set to ${rate}x`);
+    const menu = document.getElementById('exoSettingsMenu');
+    if (menu) menu.style.display = 'none';
+    resetExoControlsTimer(3000);
+}
+window.setExoSpeed = setExoSpeed;
+
+function cycleExoResizeMode() {
+    // Cycles between contain (FIT), cover (ZOOM), fill (STRETCH)
+    const modes = ['contain', 'cover', 'fill'];
+    const idx = modes.indexOf(exoCurrentResizeMode);
+    const nextMode = modes[(idx + 1) % modes.length];
+    setExoResizeMode(nextMode);
+}
+window.cycleExoResizeMode = cycleExoResizeMode;
+
+function setExoResizeMode(mode) {
+    exoCurrentResizeMode = mode;
+    const videoEl = document.getElementById('vdoSkyExoVideo') || (currentExoPlayer && currentExoPlayer.videoEl);
+    if (videoEl) {
+        videoEl.style.objectFit = mode;
+    }
+    const label = document.getElementById('exoResizeLabel');
+    if (label) {
+        label.innerText = mode === 'contain' ? 'FIT' : (mode === 'cover' ? 'ZOOM' : 'STRETCH');
+    }
+    const menu = document.getElementById('exoSettingsMenu');
+    if (menu) menu.style.display = 'none';
+    showToast(`Display mode: ${mode === 'contain' ? 'Fit Screen' : (mode === 'cover' ? 'Zoom to Fill' : 'Stretch')}`);
+    resetExoControlsTimer(3000);
+}
+window.setExoResizeMode = setExoResizeMode;
+
+function toggleExoScreenLock() {
+    exoIsScreenLocked = false;
+    const overlay = document.getElementById('exoControlsOverlay');
+    const floatBtn = document.getElementById('exoLockedFloatBtn');
+    if (floatBtn) floatBtn.style.display = 'none';
+    if (overlay) {
+        overlay.style.display = 'flex';
+        overlay.classList.remove('hidden-overlay');
+    }
+}
+window.toggleExoScreenLock = toggleExoScreenLock;
+
+function toggleExoSettings(e) {
+    if (e) {
+        e.stopPropagation();
+        e.preventDefault();
+    }
+    const menu = document.getElementById('exoSettingsMenu');
+    if (!menu) return;
+    const isVisible = menu.style.display === 'block';
+    menu.style.display = isVisible ? 'none' : 'block';
+    if (!isVisible) {
+        if (exoControlsTimer) clearTimeout(exoControlsTimer);
+    } else {
+        resetExoControlsTimer(3000);
+    }
+}
+window.toggleExoSettings = toggleExoSettings;
+
+function closeExoSettings(e) {
+    if (e) {
+        e.stopPropagation();
+        e.preventDefault();
+    }
+    const menu = document.getElementById('exoSettingsMenu');
+    if (menu) menu.style.display = 'none';
+    resetExoControlsTimer(3000);
+}
+window.closeExoSettings = closeExoSettings;
+
+function launchNativeExoPlayer(url, title) {
+    if (window.Android && typeof window.Android.playInExoPlayer === 'function') {
+        try {
+            window.Android.playInExoPlayer(url, title || 'Movie');
+            showToast('Opening in Native ExoPlayer...');
+            return;
+        } catch (e) {
+            console.warn('Native ExoPlayer call failed:', e);
+        }
+    }
+    // Fallback if not inside Android wrapper
+    window.open(url, '_blank');
+}
+window.launchNativeExoPlayer = launchNativeExoPlayer;
+
+function syncExoTimeline() {
+    const videoEl = document.getElementById('vdoSkyExoVideo') || (currentExoPlayer && currentExoPlayer.videoEl);
+    if (!videoEl || exoIsScrubbing) return;
+
+    const cur = videoEl.currentTime || 0;
+    const dur = videoEl.duration || 0;
+    const ratio = dur > 0 ? (cur / dur) : 0;
+    const percent = Math.min(100, Math.max(0, ratio * 100));
+
+    const progressBar = document.getElementById('exoProgressBar');
+    if (progressBar) progressBar.style.width = percent + '%';
+
+    const handle = document.getElementById('exoScrubberHandle');
+    if (handle) handle.style.left = percent + '%';
+
+    const curText = document.getElementById('exoCurrentTime');
+    if (curText) curText.innerText = formatTimelineTime(cur);
+
+    const durText = document.getElementById('exoDuration');
+    if (durText && dur > 0) durText.innerText = formatTimelineTime(dur);
+
+    // Buffer percentage
+    const bufferBar = document.getElementById('exoBufferBar');
+    if (bufferBar && videoEl.buffered && videoEl.buffered.length > 0 && dur > 0) {
+        try {
+            const bufEnd = videoEl.buffered.end(videoEl.buffered.length - 1);
+            const bufPercent = Math.min(100, Math.max(0, (bufEnd / dur) * 100));
+            bufferBar.style.width = bufPercent + '%';
+        } catch (e) {}
+    }
+
+    updateExoPlayPauseButtons();
+}
+
+function initExoScrubberEvents(container) {
+    const track = container.querySelector('#exoScrubberWrap');
+    if (!track) return;
+
+    const seekToPoint = (clientX) => {
+        const videoEl = document.getElementById('vdoSkyExoVideo') || (currentExoPlayer && currentExoPlayer.videoEl);
+        if (!videoEl || !videoEl.duration) return;
+        const rect = track.getBoundingClientRect();
+        const offsetX = Math.max(0, Math.min(rect.width, clientX - rect.left));
+        const ratio = offsetX / rect.width;
+        const targetTime = ratio * videoEl.duration;
+        videoEl.currentTime = targetTime;
+
+        const percent = ratio * 100;
+        const progressBar = document.getElementById('exoProgressBar');
+        if (progressBar) progressBar.style.width = percent + '%';
+        const handle = document.getElementById('exoScrubberHandle');
+        if (handle) handle.style.left = percent + '%';
+        const curText = document.getElementById('exoCurrentTime');
+        if (curText) curText.innerText = formatTimelineTime(targetTime);
+    };
+
+    const updateTooltip = (clientX) => {
+        const videoEl = document.getElementById('vdoSkyExoVideo') || (currentExoPlayer && currentExoPlayer.videoEl);
+        const tooltip = document.getElementById('exoTimeTooltip');
+        if (!tooltip || !videoEl || !videoEl.duration) return;
+        const rect = track.getBoundingClientRect();
+        const offsetX = Math.max(0, Math.min(rect.width, clientX - rect.left));
+        const ratio = offsetX / rect.width;
+        const targetTime = ratio * videoEl.duration;
+        tooltip.innerText = formatTimelineTime(targetTime);
+        tooltip.style.left = offsetX + 'px';
+        tooltip.style.display = 'block';
+    };
+
+    track.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        exoIsScrubbing = true;
+        seekToPoint(e.clientX);
+        updateTooltip(e.clientX);
+        const onPointerMove = (moveEvt) => {
+            if (exoIsScrubbing) {
+                seekToPoint(moveEvt.clientX);
+                updateTooltip(moveEvt.clientX);
+            }
+        };
+        const onPointerUp = () => {
+            exoIsScrubbing = false;
+            const tooltip = document.getElementById('exoTimeTooltip');
+            if (tooltip) tooltip.style.display = 'none';
+            window.removeEventListener('pointermove', onPointerMove);
+            window.removeEventListener('pointerup', onPointerUp);
+            resetExoControlsTimer(3000);
+        };
+        window.addEventListener('pointermove', onPointerMove);
+        window.addEventListener('pointerup', onPointerUp);
+    });
+
+    track.addEventListener('mousemove', (e) => {
+        updateTooltip(e.clientX);
+    });
+
+    track.addEventListener('mouseleave', () => {
+        if (!exoIsScrubbing) {
+            const tooltip = document.getElementById('exoTimeTooltip');
+            if (tooltip) tooltip.style.display = 'none';
+        }
+    });
+}
+
+function initExoTouchSurface(container) {
+    const leftZone = container.querySelector('#exoTapZoneLeft');
+    const rightZone = container.querySelector('#exoTapZoneRight');
+    const touchSurface = container.querySelector('#exoTouchSurface');
+    if (!touchSurface) return;
+
+    // Double-tap left zone -> -10s
+    if (leftZone) {
+        leftZone.addEventListener('click', (e) => {
+            const now = Date.now();
+            if (now - exoLastTapTimeLeft < 300) {
+                if (exoSingleTapTimeout) {
+                    clearTimeout(exoSingleTapTimeout);
+                    exoSingleTapTimeout = null;
+                }
+                exoSeekDelta(-10);
+                exoLastTapTimeLeft = 0;
+            } else {
+                exoLastTapTimeLeft = now;
+                exoSingleTapTimeout = setTimeout(() => {
+                    exoSingleTapTimeout = null;
+                    handleExoSingleTap();
+                }, 300);
+            }
+        });
+    }
+
+    // Double-tap right zone -> +10s
+    if (rightZone) {
+        rightZone.addEventListener('click', (e) => {
+            const now = Date.now();
+            if (now - exoLastTapTimeRight < 300) {
+                if (exoSingleTapTimeout) {
+                    clearTimeout(exoSingleTapTimeout);
+                    exoSingleTapTimeout = null;
+                }
+                exoSeekDelta(10);
+                exoLastTapTimeRight = 0;
+            } else {
+                exoLastTapTimeRight = now;
+                exoSingleTapTimeout = setTimeout(() => {
+                    exoSingleTapTimeout = null;
+                    handleExoSingleTap();
+                }, 300);
+            }
+        });
+    }
+
+    // Mousemove / touch hover shows controls
+    container.addEventListener('mousemove', () => {
+        if (!exoIsScreenLocked) {
+            const overlay = document.getElementById('exoControlsOverlay');
+            if (overlay) overlay.classList.remove('hidden-overlay');
+            resetExoControlsTimer(3200);
+        }
+    });
+
+    container.addEventListener('mouseleave', () => {
+        const videoEl = document.getElementById('vdoSkyExoVideo') || (currentExoPlayer && currentExoPlayer.videoEl);
+        if (videoEl && !videoEl.paused && !videoEl.ended && !exoIsScrubbing && !exoIsScreenLocked) {
+            const overlay = document.getElementById('exoControlsOverlay');
+            if (overlay) overlay.classList.add('hidden-overlay');
+        }
+    });
+
+    function handleExoSingleTap() {
+        if (exoIsScreenLocked) return;
+        const overlay = document.getElementById('exoControlsOverlay');
+        if (!overlay) return;
+        if (overlay.classList.contains('hidden-overlay')) {
+            overlay.classList.remove('hidden-overlay');
+            resetExoControlsTimer(3200);
+        } else {
+            overlay.classList.add('hidden-overlay');
+            const menu = document.getElementById('exoSettingsMenu');
+            if (menu) menu.style.display = 'none';
+        }
+    }
+}
+
+// Initialize ExoPlayer player on HTML5 video element
+function initExoPlayer(videoEl, movie, activeServerIndex) {
+    destroyCurrentExoPlayer();
+    if (!videoEl) return;
+
+    exoIsScreenLocked = false;
+    exoIsScrubbing = false;
+
+    const container = document.getElementById('exoPlayerContainer') || videoEl.parentElement;
+
+    const showBuffering = () => {
+        const buf = document.getElementById('exoBufferingOverlay');
+        if (buf) buf.style.display = 'flex';
+    };
+    const hideBuffering = () => {
+        const buf = document.getElementById('exoBufferingOverlay');
+        if (buf) buf.style.display = 'none';
+    };
+
+    // Video buffering & playback listeners
+    videoEl.addEventListener('seeking', showBuffering);
+    videoEl.addEventListener('waiting', showBuffering);
+    videoEl.addEventListener('loadstart', showBuffering);
+    videoEl.addEventListener('playing', () => {
+        hideBuffering();
+        updateExoPlayPauseButtons();
+        resetExoControlsTimer(3200);
+    });
+    videoEl.addEventListener('pause', () => {
+        updateExoPlayPauseButtons();
+        const overlay = document.getElementById('exoControlsOverlay');
+        if (overlay) overlay.classList.remove('hidden-overlay');
+    });
+    videoEl.addEventListener('canplay', hideBuffering);
+    videoEl.addEventListener('canplaythrough', hideBuffering);
+    videoEl.addEventListener('timeupdate', syncExoTimeline);
+    videoEl.addEventListener('progress', syncExoTimeline);
+    videoEl.addEventListener('seeked', () => {
+        setTimeout(() => {
+            if (videoEl.readyState >= 3 && !videoEl.seeking) {
+                hideBuffering();
+            }
+        }, 150);
+        syncExoTimeline();
+    });
+
+    // Native iOS & WebKit video fullscreen handlers
+    videoEl.addEventListener('webkitbeginfullscreen', () => {
+        const box = document.getElementById('activePlayerBox');
+        if (box) box.classList.add('is-fullscreen');
+        lockLandscapeOrientation();
+        updateFullscreenButtonState(true);
+    });
+    videoEl.addEventListener('webkitendfullscreen', () => {
+        if (isAutoNextTransitioning || wasFullscreenBeforeNext) {
+            return;
+        }
+        const box = document.getElementById('activePlayerBox');
+        if (box) {
+            box.classList.remove('is-fullscreen');
+            box.classList.remove('plyr-force-landscape');
+        }
+        if (container) {
+            container.classList.remove('plyr-force-landscape');
+        }
+        unlockScreenOrientation();
+        updateFullscreenButtonState(false);
+    });
+
+    // Video completion triggers Auto Next
+    videoEl.addEventListener('ended', () => {
+        updateExoPlayPauseButtons();
+        handleVideoEnded();
+    });
+
+    // Error handling
+    videoEl.addEventListener('error', (e) => {
+        if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+        hideBuffering();
+        const errorBox = document.getElementById('playerStreamErrorNotice');
+        if (errorBox) errorBox.style.display = 'flex';
+    }, true);
+
+    // Setup interactive touch surfaces and scrubber
+    if (container) {
+        initExoTouchSurface(container);
+        initExoScrubberEvents(container);
+    }
+
+    // Attempt autoplay smoothly
+    try {
+        const playPromise = videoEl.play();
+        if (playPromise && typeof playPromise.catch === 'function') {
+            playPromise.catch(() => {
+                // Autoplay blocked by browser policy without mute
+            });
+        }
+    } catch (e) {}
+
+    // Construct ExoPlayer controller wrapper object for high compatibility
+    const exoController = {
+        videoEl: videoEl,
+        container: container,
+        elements: {
+            container: container
+        },
+        play: () => videoEl.play(),
+        pause: () => videoEl.pause(),
+        togglePlay: () => toggleExoPlay(),
+        get currentTime() {
+            return videoEl.currentTime || 0;
+        },
+        set currentTime(val) {
+            videoEl.currentTime = val;
+            syncExoTimeline();
+        },
+        get duration() {
+            return videoEl.duration || 0;
+        },
+        get buffered() {
+            if (videoEl.buffered && videoEl.buffered.length > 0 && videoEl.duration) {
+                return videoEl.buffered.end(videoEl.buffered.length - 1) / videoEl.duration;
+            }
+            return 0;
+        },
+        get playing() {
+            return !videoEl.paused && !videoEl.ended && videoEl.readyState > 2;
+        },
+        get paused() {
+            return videoEl.paused;
+        },
+        set source(srcObj) {
+            if (!srcObj) return;
+            let targetUrl = '';
+            if (typeof srcObj === 'string') {
+                targetUrl = srcObj;
+            } else if (Array.isArray(srcObj.sources) && srcObj.sources[0]) {
+                targetUrl = srcObj.sources[0].src;
+            } else if (srcObj.src) {
+                targetUrl = srcObj.src;
+            }
+            if (targetUrl) {
+                videoEl.src = targetUrl;
+                if (srcObj.poster) {
+                    videoEl.poster = srcObj.poster;
+                }
+                videoEl.load();
+                videoEl.play().catch(() => {});
+            }
+            if (srcObj.title) {
+                const titleEl = container.querySelector('.exo-movie-title');
+                if (titleEl) titleEl.innerText = srcObj.title;
+            }
+        },
+        fullscreen: {
+            get active() {
+                const box = document.getElementById('activePlayerBox');
+                return !!(
+                    isManualPlayerFullscreen ||
+                    document.fullscreenElement ||
+                    document.webkitFullscreenElement ||
+                    (box && box.classList.contains('is-fullscreen'))
+                );
+            },
+            enter: () => {
+                const box = document.getElementById('activePlayerBox') || container;
+                if (box) {
+                    if (box.requestFullscreen) box.requestFullscreen({ navigationUI: 'hide' }).catch(() => {});
+                    else if (box.webkitRequestFullscreen) box.webkitRequestFullscreen();
+                    box.classList.add('is-fullscreen');
+                    lockLandscapeOrientation();
+                    updateFullscreenButtonState(true);
+                }
+            },
+            exit: () => {
+                const box = document.getElementById('activePlayerBox') || container;
+                if (box) {
+                    box.classList.remove('is-fullscreen');
+                    box.classList.remove('plyr-force-landscape');
+                }
+                if (document.fullscreenElement || document.webkitFullscreenElement) {
+                    if (document.exitFullscreen) document.exitFullscreen().catch(() => {});
+                    else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+                }
+                unlockScreenOrientation();
+                updateFullscreenButtonState(false);
+            }
+        },
+        on: (event, handler) => {
+            videoEl.addEventListener(event, handler);
+        },
+        off: (event, handler) => {
+            videoEl.removeEventListener(event, handler);
+        },
+        destroy: () => {
+            if (exoControlsTimer) {
+                clearTimeout(exoControlsTimer);
+                exoControlsTimer = null;
+            }
+            try {
+                videoEl.pause();
+                videoEl.removeAttribute('src');
+                videoEl.load();
+            } catch (e) {}
+        }
+    };
+
+    currentExoPlayer = exoController;
+    currentPlyrInstance = exoController; // Backwards-compatible alias
+    window.currentExoPlayer = exoController;
+    window.currentPlyrInstance = exoController;
+
+    syncExoTimeline();
+    resetExoControlsTimer(3200);
+}
+
+const initPlyrPlayer = initExoPlayer; // Alias so legacy callers seamlessly route to ExoPlayer
+window.initExoPlayer = initExoPlayer;
+window.initPlyrPlayer = initPlyrPlayer;
 
 // ==========================================
 // 300x250 MEDIUM RECTANGLE AD UNITS
@@ -3154,117 +3557,9 @@ function testYouTubeVideo(ytId) {
     });
 }
 
-// Master Link Verifier: accurately checks if stream link is valid and working
+// Link verifier bypassed - immediate resolution
 async function verifyMovieLink(movie) {
-    if (!movie) return { valid: false, reason: 'no_movie' };
-
-    const hasEpisodes = Array.isArray(movie.episodes) && movie.episodes.length > 0;
-    const currentEp = hasEpisodes ? (movie.episodes[window.currentActiveEpisodeIndex || 0] || movie.episodes[0]) : null;
-    const epLink = currentEp ? extractEpisodeUrl(currentEp) : '';
-
-    const rawVideo = epLink || String(movie.video || movie.videoUrl || movie.streamUrl || movie.link || movie.url || '').trim();
-    const rawYt = String(movie.yt || movie.youtube || '').trim();
-    const rawDrc = String(movie.drc || movie.direct || '').trim();
-
-    // 1. If completely empty or default mock, fail immediately unless episodes exist
-    if (!rawVideo && !rawYt && !rawDrc && !hasEpisodes) {
-        return { valid: false, reason: 'empty_link' };
-    }
-    if (rawVideo === 'default' && !rawYt && !rawDrc && !hasEpisodes) {
-        return { valid: false, reason: 'default_link' };
-    }
-
-    // 2. Google Drive Preview Links: ONLY when link is https://drive.google.com/file/d/.../preview -> IFRAME PREVIEW
-    const isDrivePreviewLink = rawVideo.startsWith('http') && (
-        (rawVideo.includes('drive.google.com') && (rawVideo.includes('/preview') || rawVideo.includes('/view') || rawVideo.includes('/file/d/'))) ||
-        (rawVideo.includes('docs.google.com') && rawVideo.includes('/preview'))
-    );
-    if (isDrivePreviewLink) {
-        const driveId = cleanGoogleDriveId(rawVideo);
-        const previewUrl = driveId ? `https://drive.google.com/file/d/${driveId}/preview` : rawVideo;
-        return {
-            valid: true,
-            verifiedSource: {
-                type: 'gdrive',
-                id: driveId || rawVideo,
-                url: previewUrl,
-                raw: rawVideo
-            }
-        };
-    }
-
-    // 3. YouTube Links
-    if (rawYt || rawVideo.includes('youtube.com') || rawVideo.includes('youtu.be')) {
-        let ytId = (!hasEpisodes && rawYt) ? rawYt : '';
-        if (!ytId) {
-            const match = rawVideo.match(/(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/i);
-            ytId = match ? match[1] : '';
-        }
-        if (ytId && ytId.length === 11) {
-            const isYtAlive = await testYouTubeVideo(ytId);
-            if (isYtAlive) {
-                return {
-                    valid: true,
-                    verifiedSource: {
-                        type: 'yt',
-                        id: ytId,
-                        url: `https://www.youtube.com/embed/${ytId}?autoplay=1&enablejsapi=1&rel=0&playsinline=1&iv_load_policy=3&modestbranding=1&fs=0`,
-                        raw: rawYt || rawVideo
-                    }
-                };
-            }
-        }
-    }
-
-    // 4. Raw Google Drive file IDs (e.g. "1DlvdGn8QaXGuJVbeU6wrKxGUJfV-0Txh0") -> PREVIOUS PLYR PLAYER!
-    let baseDriveId = '';
-    if (!rawVideo.startsWith('http') && /^[-\w]{15,}$/.test(rawVideo)) {
-        baseDriveId = cleanGoogleDriveId(rawVideo);
-    } else if (rawVideo.includes('id=')) {
-        baseDriveId = cleanGoogleDriveId(rawVideo);
-    }
-
-    if (baseDriveId) {
-        const workerUrl = `https://debasis.installapkapps.workers.dev/?id=${encodeURIComponent(baseDriveId)}`;
-        return {
-            valid: true,
-            verifiedSource: {
-                type: 'video',
-                id: baseDriveId,
-                rawId: baseDriveId,
-                url: workerUrl,
-                raw: rawVideo
-            }
-        };
-    }
-
-    // 5. Direct video URL (drc)
-    const directUrl = rawDrc || (rawVideo.startsWith('http') ? rawVideo : '');
-    if (directUrl) {
-        if (directUrl.includes('TearsOfSteel.mp4') || directUrl.includes('sample/')) {
-            return { valid: false, reason: 'sample_placeholder' };
-        }
-        const isDirectAlive = await testDirectVideoUrl(directUrl);
-        if (isDirectAlive) {
-            return {
-                valid: true,
-                verifiedSource: {
-                    type: 'drc',
-                    id: directUrl,
-                    url: directUrl,
-                    raw: directUrl
-                }
-            };
-        }
-        return { valid: false, reason: 'direct_dead' };
-    }
-
-    if (hasEpisodes) {
-        return { valid: true };
-    }
-
-    // Default: link cannot be resolved
-    return { valid: false, reason: 'unknown_source' };
+    return { valid: true };
 }
 
 let pendingPlayerMovie = null;
@@ -3298,47 +3593,10 @@ window.openPlayer = async function(movie, preserveFullscreen = false) {
 };
 
 async function continueOpenPlayer(movie, preserveFullscreen = false) {
-    const hasEpisodes = Array.isArray(movie.episodes) && movie.episodes.length > 0;
-    const rawVideoStr = String(movie.video || movie.videoUrl || movie.streamUrl || movie.link || movie.url || '').trim();
-    const rawYt = String(movie.yt || movie.youtube || '').trim();
-    const rawDrc = String(movie.drc || movie.direct || '').trim();
-
-    // If completely empty, reject immediately without delay
-    if (!rawVideoStr && !rawYt && !rawDrc && !hasEpisodes) {
-        window.showThemePlayerError(movie);
-        return;
-    }
-
-    // Show spring loader while checking link
+    if (!movie) return;
     const springLoader = document.getElementById("movieVerifierLoader");
-    if (springLoader) {
-        springLoader.style.display = "flex";
-        const subEl = springLoader.querySelector('.spring-loader-sub');
-        if (subEl) subEl.textContent = 'Verifying stream server, please wait...';
-    }
-
-    try {
-        const verifyResult = await verifyMovieLink(movie);
-
-        // Always hide loader once check is finished
-        if (springLoader) springLoader.style.display = "none";
-
-        if (verifyResult && verifyResult.valid) {
-            // Apply verified working source to the movie object (single movie only; web series resolve per episode)
-            if (verifyResult.verifiedSource && !hasEpisodes) {
-                movie._verifiedSource = verifyResult.verifiedSource;
-            }
-            performOpenPlayerDirect(movie, preserveFullscreen);
-        } else {
-            // STRICT REJECTION: Invalid, dead, or broken links MUST NEVER open the player!
-            console.warn("Link verification failed for movie:", movie.title || movie.name, verifyResult?.reason);
-            window.showThemePlayerError(movie);
-        }
-    } catch (err) {
-        console.error("Link verification encountered unexpected error:", err);
-        if (springLoader) springLoader.style.display = "none";
-        window.showThemePlayerError(movie);
-    }
+    if (springLoader) springLoader.style.display = "none";
+    performOpenPlayerDirect(movie, preserveFullscreen);
 }
 
 // Safe trim helper that handles arrays, objects, strings, numbers, and null/undefined
@@ -4146,14 +4404,19 @@ window.switchRelatedView = function(mode) {
 
 function renderPlayerSection(movie, activeServerIndex = 0, preserveFullscreen = false) {
     const container = document.getElementById('mainContainer');
-    if (!container) return;
+    if (!container || !movie) return;
 
     destroyCurrentPlyr(preserveFullscreen);
     currentActiveServerIndex = activeServerIndex;
 
-    const sourceInfo = detectMovieVideoSource(movie);
-    const servers = getMovieServers(movie);
-    const activeServer = servers[activeServerIndex] || servers[0];
+    const sourceInfo = detectMovieVideoSource(movie) || { type: 'video' };
+    const servers = getMovieServers(movie) || [];
+    const activeServer = (servers && servers[activeServerIndex]) || (servers && servers[0]) || {
+        name: 'Server 1',
+        url: movie.videoUrl || movie.url || '',
+        type: sourceInfo.type || 'video',
+        quality: '1080p'
+    };
     const isYouTube = (activeServer.type === 'yt') || (sourceInfo.type === 'yt');
     const isGDrive = (activeServer.type === 'gdrive') || (sourceInfo.type === 'gdrive') ||
                      (activeServer.url && activeServer.url.startsWith('http') && (
@@ -4417,39 +4680,147 @@ function renderPlayerSection(movie, activeServerIndex = 0, preserveFullscreen = 
                         <i class="fa-solid fa-compress"></i> Exit Fullscreen
                     </button>
                 ` : `
-                    <video id="vdoSkyPlyr" class="player" playsinline controls preload="metadata" poster="${movie.poster || ''}">
-                        <source src="${activeServer.url}" type="video/mp4">
-                        Your browser does not support HTML5 video.
-                    </video>
+                    <div class="exoplayer-container" id="exoPlayerContainer">
+                        <video id="vdoSkyExoVideo" class="exoplayer-video" playsinline preload="metadata" poster="${movie.poster || ''}">
+                            <source src="${activeServer.url}" type="video/mp4">
+                            Your browser does not support HTML5 video.
+                        </video>
 
-                    <!-- Stream Error Fallback Notice -->
-                    <div id="playerStreamErrorNotice" style="display: none; position: absolute; inset: 0; background: rgba(10,12,18,0.93); z-index: 30; flex-direction: column; align-items: center; justify-content: center; padding: 20px; text-align: center;">
-                        <i class="fa-solid fa-triangle-exclamation" style="font-size: 32px; color: #ffb703; margin-bottom: 10px;"></i>
-                        <h3 style="font-size: 16px; font-weight: bold; margin-bottom: 6px; color: #fff;">Stream Loading Interrupted</h3>
-                        <p style="font-size: 12px; color: #8b949e; margin-bottom: 14px; max-width: 320px;">
-                            This stream server is taking longer than expected. Please switch to another server to continue playing.
-                        </p>
-                        <button onclick="switchServer(${(activeServerIndex + 1) % servers.length})" style="background: #00d2ff; color: #1e1e2f; font-weight: bold; border: none; padding: 8px 18px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; gap: 8px;">
-                            <i class="fa-solid fa-rotate"></i> Try Server ${((activeServerIndex + 1) % servers.length) + 1}
-                        </button>
+                        <!-- Double-tap skip touch zones -->
+                        <div class="exo-touch-surface" id="exoTouchSurface">
+                            <div class="exo-tap-zone left" id="exoTapZoneLeft"></div>
+                            <div class="exo-tap-zone right" id="exoTapZoneRight"></div>
+                        </div>
+
+                        <!-- Ripple Indicators for Double-Tap Seek -->
+                        <div class="exo-skip-anim left" id="exoSkipLeftAnim">
+                            <div class="exo-skip-icon"><i class="fa-solid fa-rotate-left"></i></div>
+                            <div class="exo-skip-text">-10s</div>
+                        </div>
+                        <div class="exo-skip-anim right" id="exoSkipRightAnim">
+                            <div class="exo-skip-icon"><i class="fa-solid fa-rotate-right"></i></div>
+                            <div class="exo-skip-text">+10s</div>
+                        </div>
+
+                        <!-- Central Buffering Overlay -->
+                        <div class="exo-buffering-overlay" id="exoBufferingOverlay" style="display: none;">
+                            <div class="exo-buffer-spinner"></div>
+                            <span class="exo-buffer-text">Buffering Stream...</span>
+                        </div>
+
+                        <!-- ExoPlayer HUD Overlay Controls -->
+                        <div class="exo-controls-overlay" id="exoControlsOverlay">
+                            <!-- Top Bar: Title, Resize Aspect Ratio, Speed, External Native ExoPlayer Button -->
+                            <div class="exo-top-bar">
+                                <div class="exo-title-wrap">
+                                    <span class="exo-movie-title">${escapeHtml(movie.title || movie.name || 'Playing Stream')}</span>
+                                    <span class="exo-badge"><i class="fa-solid fa-play"></i> ExoPlayer</span>
+                                </div>
+                                <div class="exo-top-actions">
+                                    <button type="button" class="exo-btn" id="exoResizeBtn" onclick="window.cycleExoResizeMode();" title="Video Aspect Ratio (Fit / Zoom / Stretch)">
+                                        <i class="fa-solid fa-expand"></i> <span class="exo-btn-label" id="exoResizeLabel">FIT</span>
+                                    </button>
+                                    <button type="button" class="exo-btn" onclick="window.toggleExoSettings(event);" title="Playback Speed & Settings">
+                                        <i class="fa-solid fa-gear"></i>
+                                    </button>
+                                    ${window.Android && typeof window.Android.playInExoPlayer === 'function' ? `
+                                        <button type="button" class="exo-btn exo-native-btn" data-url="${encodeURIComponent(activeServer.url || '')}" data-title="${encodeURIComponent(movie.title || movie.name || '')}" onclick="window.launchNativeExoPlayer(decodeURIComponent(this.dataset.url), decodeURIComponent(this.dataset.title));" title="Open in Native Android ExoPlayer App">
+                                            <i class="fa-solid fa-mobile-screen"></i> <span>Native App</span>
+                                        </button>
+                                    ` : ''}
+                                </div>
+                            </div>
+
+                            <!-- Settings Menu Popover -->
+                            <div class="exo-settings-menu" id="exoSettingsMenu" style="display: none;" onclick="event.stopPropagation();">
+                                <div class="exo-settings-header">
+                                    <span><i class="fa-solid fa-sliders"></i> ExoPlayer Settings</span>
+                                    <button type="button" class="exo-settings-close" onclick="window.closeExoSettings(event);">&times;</button>
+                                </div>
+                                <div class="exo-settings-group">
+                                    <label>Playback Speed</label>
+                                    <div class="exo-speed-chips">
+                                        <button type="button" class="exo-speed-chip active" data-speed="1" onclick="window.setExoSpeed(1);">1.0x</button>
+                                        <button type="button" class="exo-speed-chip" data-speed="1.25" onclick="window.setExoSpeed(1.25);">1.25x</button>
+                                        <button type="button" class="exo-speed-chip" data-speed="1.5" onclick="window.setExoSpeed(1.5);">1.5x</button>
+                                        <button type="button" class="exo-speed-chip" data-speed="2" onclick="window.setExoSpeed(2);">2.0x</button>
+                                    </div>
+                                </div>
+                                <div class="exo-settings-group">
+                                    <label>Resize Mode</label>
+                                    <div class="exo-speed-chips">
+                                        <button type="button" class="exo-speed-chip" onclick="window.setExoResizeMode('contain');">Fit (Contain)</button>
+                                        <button type="button" class="exo-speed-chip" onclick="window.setExoResizeMode('cover');">Zoom (Fill)</button>
+                                        <button type="button" class="exo-speed-chip" onclick="window.setExoResizeMode('fill');">Stretch</button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Center Controller: Rewind 10s, Center Play/Pause, Fast Forward 10s -->
+                            <div class="exo-center-bar">
+                                <button type="button" class="exo-action-circle" onclick="window.exoSeekDelta(-10);" title="Rewind 10 seconds">
+                                    <i class="fa-solid fa-rotate-left"></i>
+                                    <span class="exo-seek-sub">-10</span>
+                                </button>
+                                <button type="button" class="exo-action-circle main-play" id="exoMainPlayBtn" onclick="window.toggleExoPlay();" title="Play / Pause">
+                                    <i class="fa-solid fa-play" id="exoMainPlayIcon"></i>
+                                </button>
+                                <button type="button" class="exo-action-circle" onclick="window.exoSeekDelta(10);" title="Fast Forward 10 seconds">
+                                    <i class="fa-solid fa-rotate-right"></i>
+                                    <span class="exo-seek-sub">+10</span>
+                                </button>
+                            </div>
+
+                            <!-- Bottom Bar: Timeline Scrubber, Time Display, Mute/Volume, Fullscreen -->
+                            <div class="exo-bottom-bar">
+                                <div class="exo-scrubber-wrap" id="exoScrubberWrap">
+                                    <div class="exo-scrubber-track" id="exoScrubberTrack">
+                                        <div class="exo-buffer-bar" id="exoBufferBar"></div>
+                                        <div class="exo-progress-bar" id="exoProgressBar"></div>
+                                        <div class="exo-scrubber-handle" id="exoScrubberHandle"></div>
+                                    </div>
+                                    <div class="exo-time-tooltip" id="exoTimeTooltip">00:00</div>
+                                </div>
+
+                                <div class="exo-bottom-actions">
+                                    <div class="exo-bottom-left">
+                                        <button type="button" class="exo-control-btn" id="exoPlayPauseSmallBtn" onclick="window.toggleExoPlay();" title="Play / Pause">
+                                            <i class="fa-solid fa-play" id="exoPlayPauseSmallIcon"></i>
+                                        </button>
+                                        <button type="button" class="exo-control-btn" id="exoMuteBtn" onclick="window.toggleExoMute();" title="Mute / Unmute">
+                                            <i class="fa-solid fa-volume-high" id="exoMuteIcon"></i>
+                                        </button>
+                                        <div class="exo-time-display">
+                                            <span id="exoCurrentTime">00:00</span>
+                                            <span class="exo-time-divider">/</span>
+                                            <span id="exoDuration">00:00</span>
+                                        </div>
+                                    </div>
+
+                                    <div class="exo-bottom-right">
+                                        <button type="button" class="exo-control-btn" onclick="window.triggerFullscreenPlayer();" title="Toggle Fullscreen">
+                                            <i class="fa-solid fa-expand" id="exoFullscreenIcon"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Stream Error Fallback Notice -->
+                        <div id="playerStreamErrorNotice" style="display: none; position: absolute; inset: 0; background: rgba(10,12,18,0.95); z-index: 45; flex-direction: column; align-items: center; justify-content: center; padding: 20px; text-align: center;">
+                            <i class="fa-solid fa-triangle-exclamation" style="font-size: 32px; color: #ffb703; margin-bottom: 10px;"></i>
+                            <h3 style="font-size: 16px; font-weight: bold; margin-bottom: 6px; color: #fff;">Stream Loading Interrupted</h3>
+                            <p style="font-size: 12px; color: #8b949e; margin-bottom: 14px; max-width: 320px;">
+                                This stream server is taking longer than expected. Please switch to another server to continue playing.
+                            </p>
+                            <button onclick="switchServer(${(activeServerIndex + 1) % servers.length})" style="background: #e50914; color: #fff; font-weight: bold; border: none; padding: 8px 18px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; gap: 8px;">
+                                <i class="fa-solid fa-rotate"></i> Try Server ${((activeServerIndex + 1) % servers.length) + 1}
+                            </button>
+                        </div>
                     </div>
                 `}
             </div>
 
-            <!-- Streaming Server Switcher & Auto Next Controls -->
-            <div class="server-selector">
-                <span class="server-label"><i class="fa-solid fa-bolt"></i> Stream Server:</span>
-                ${serverPills}
-                <div class="auto-next-server-wrap">
-                    <button type="button" class="auto-next-pill-btn ${isAutoNextEnabled ? 'active' : ''}" onclick="toggleAutoNext()" title="Toggle Auto Next">
-                        <i class="fa-solid ${isAutoNextEnabled ? 'fa-toggle-on' : 'fa-toggle-off'}"></i>
-                        <span>Auto Next: <strong>${isAutoNextEnabled ? 'ON' : 'OFF'}</strong></span>
-                    </button>
-                    <button type="button" class="quick-next-btn" onclick="playNextVideo(true)" title="Play Next Stream">
-                        <i class="fa-solid fa-forward-step"></i> Next
-                    </button>
-                </div>
-            </div>
 
             ${movie.episodes && movie.episodes.length > 0 ? `
             <!-- Episodes & Playlist System -->
@@ -4591,13 +4962,13 @@ function renderPlayerSection(movie, activeServerIndex = 0, preserveFullscreen = 
         // Load exactly 20 related YouTube posts (from YouTube itself, not the movie section)
         loadYouTubeRelatedPosts(movie, sourceInfo.id);
     } else if (isGDrive) {
-        destroyCurrentPlyr();
+        destroyCurrentExoPlayer();
         // Populate standard movie section related movies (20 posts)
         populateMovieSectionCards(relatedMovies);
     } else {
-        const videoEl = document.getElementById('vdoSkyPlyr');
+        const videoEl = document.getElementById('vdoSkyExoVideo') || document.getElementById('vdoSkyPlyr');
         if (videoEl) {
-            initPlyrPlayer(videoEl, movie, activeServerIndex);
+            initExoPlayer(videoEl, movie, activeServerIndex);
         }
         // Populate standard movie section related movies (20 posts)
         populateMovieSectionCards(relatedMovies);
@@ -4836,11 +5207,11 @@ window.switchEpisode = function(epIdx, preserveFullscreen = false) {
     const isTargetYouTube = (targetServer.type === 'yt') || (sourceInfo.type === 'yt');
     const isTargetGDrive = (targetServer.type === 'gdrive') || (sourceInfo.type === 'gdrive');
 
-    const plyrVideoEl = document.getElementById('vdoSkyPlyr');
+    const plyrVideoEl = document.getElementById('vdoSkyExoVideo') || document.getElementById('vdoSkyPlyr');
     const gdriveIframe = document.getElementById('vdoSkyGDrive');
     const ytIframe = document.getElementById('vdoSkyYouTube');
 
-    // 1. Seamless in-place transition for Plyr player (Worker stream, direct mp4, Drive ID)
+    // 1. Seamless in-place transition for ExoPlayer (Worker stream, direct mp4, Drive ID)
     if (activeBox && currentPlyrInstance && plyrVideoEl && !isTargetYouTube && !isTargetGDrive) {
         currentPlyrInstance.source = {
             type: 'video',
@@ -6288,10 +6659,9 @@ function initFooterBannerAd() {
 }
 
 // ==========================================
-// SMARTLINK INTERSTITIAL AD & POPUNDER (10-min interval, 15s skip countdown, fullscreen support)
+// NATIVE BANNER INTERSTITIAL AD (10-min interval, 15s skip countdown, fullscreen support)
+// Note: All external popunder smartlinks and target="_blank" redirects on post click have been permanently removed
 // ==========================================
-const SMARTLINK_URL = "https://www.profitableratecpmnetwork.com/xvstux43?key=0c857c73c9952f0b87cdbb9b39755d98";
-const POPUNDER_URL = "https://www.profitableratecpmnetwork.com/xvstux43?key=0c857c73c9952f0b87cdbb9b39755d98";
 const INTERSTITIAL_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
 
 let interstitialCountdownInterval = null;
@@ -6383,7 +6753,7 @@ function showSmartlinkInterstitial() {
                     <div class="interstitial-loader-spinner"></div>
                     <span>Loading Advertisement...</span>
                 </div>
-                <iframe id="smartlinkAdIframe" src="about:blank" sandbox="allow-scripts allow-forms allow-same-origin allow-presentation allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"></iframe>
+                <iframe id="smartlinkAdIframe" src="about:blank" sandbox="allow-scripts allow-forms allow-same-origin allow-presentation allow-popups" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"></iframe>
             </div>
         `;
         document.body.appendChild(modal);
@@ -6559,7 +6929,7 @@ function closeSmartlinkInterstitial() {
 window.closeSmartlinkInterstitial = closeSmartlinkInterstitial;
 
 function openSmartlinkInChrome() {
-    window.openInChrome(SMARTLINK_URL);
+    // Disabled - smartlinks and external new tab redirects have been removed
 }
 window.openSmartlinkInChrome = openSmartlinkInChrome;
 
@@ -6578,50 +6948,11 @@ function showStartIoRewardedAd(movie, onComplete) {
 }
 window.showStartIoRewardedAd = showStartIoRewardedAd;
 
-// Popunder implementation using requested link
-let lastPopunderTime = parseInt(localStorage.getItem('vdosky_last_popunder') || '0', 10);
-const POPUNDER_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes cooldown between popunders
-
-function triggerPopunderClick() {
-    if (window.__isVipSubscribed) return;
-    const now = Date.now();
-    if (now - lastPopunderTime < POPUNDER_COOLDOWN_MS) return;
-
-    lastPopunderTime = now;
-    localStorage.setItem('vdosky_last_popunder', now.toString());
-
-    try {
-        if (typeof window.openInChrome === 'function') {
-            window.openInChrome(POPUNDER_URL);
-        } else {
-            window.open(POPUNDER_URL, '_blank', 'noopener,noreferrer');
-        }
-    } catch (e) {
-        console.warn('Popunder trigger error:', e);
-    }
-}
-
-window.showPopunderInterstitial = function() {
-    if (window.__isVipSubscribed) return;
-    triggerPopunderClick();
-};
+// Popunder and external smartlink tab openings permanently removed
+window.showPopunderInterstitial = function() {};
 window.closePopunderInterstitial = function() {
     isPopunderActive = false;
 };
-
-// Listen for first interaction gestures to trigger popunder when cooldown permits
-document.addEventListener('click', function onFirstUserPopunderClick(e) {
-    if (window.__isVipSubscribed) return;
-    // Don't trigger on VIP buttons or ad close buttons
-    const target = e.target;
-    if (target && (target.closest('.interstitial-skip-btn') || target.closest('.interstitial-vip-btn') || target.closest('.vip-badge-pill') || target.closest('#vipMenuItem'))) {
-        return;
-    }
-    const now = Date.now();
-    if (now - lastPopunderTime >= POPUNDER_COOLDOWN_MS) {
-        triggerPopunderClick();
-    }
-}, { passive: true });
 
 // Check timer every 5 seconds to trigger every 15 minutes reliably
 setInterval(() => {

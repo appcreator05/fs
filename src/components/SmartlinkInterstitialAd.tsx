@@ -208,7 +208,7 @@ export const SmartlinkInterstitialAd: React.FC<SmartlinkInterstitialAdProps> = (
         <iframe
           srcDoc={NATIVE_BANNER_HTML}
           className="w-full h-full border-0 bg-[#0a0d14]"
-          sandbox="allow-forms allow-modals allow-orientation-lock allow-pointer-lock allow-popups allow-popups-to-escape-sandbox allow-presentation allow-same-origin allow-scripts allow-top-navigation-by-user-activation"
+          sandbox="allow-forms allow-modals allow-orientation-lock allow-pointer-lock allow-popups allow-presentation allow-same-origin allow-scripts"
           scrolling="yes"
           title="Sponsored Native Banner"
         />

@@ -6217,6 +6217,10 @@ window.checkAppUpdate = function(e) {
 };
 
 window.clearTopSearch = function() {
+    if (typeof movieSearchDebounceTimer !== 'undefined' && movieSearchDebounceTimer) {
+        clearTimeout(movieSearchDebounceTimer);
+        movieSearchDebounceTimer = null;
+    }
     const searchInput = document.getElementById('searchInput');
     const clearBtn = document.getElementById('searchClearBtn');
     if (searchInput) {
@@ -6323,28 +6327,76 @@ window.handleMenuShareApp = function(e) {
     window.location.href = "share.html";
 };
 
-window.handleSearchInput = async function() {
+// Global search debounce and sequence identifiers to prevent UI lag and stale results
+let movieSearchDebounceTimer = null;
+let currentSearchRenderId = 0;
+
+function createSearchMovieCard(m) {
+    const card = document.createElement('div');
+    card.className = 'movie-card';
+    card.style.flex = "none";
+    card.style.minWidth = "unset";
+    card.onclick = () => window.openPlayer(m); 
+
+    const titleText = m.title || m.name || '';
+    const isLong = titleText.length > 18;
+
+    card.innerHTML = `
+        <span class="rating-badge">★ ${m.rating || '0.0'}</span>
+        <img src="${m.poster || m.image || ''}" loading="lazy" decoding="async">
+        <div class="movie-title-container">
+            <div class="movie-title ${isLong ? 'marquee-title' : ''}">${titleText}</div>
+        </div>
+    `;
+
+    if (m.poster) {
+        getImage(m.poster).then(imgUrl => {
+            if (imgUrl) {
+                const img = card.querySelector('img');
+                if (img) img.src = imgUrl;
+            }
+        }).catch(() => {});
+    }
+    return card;
+}
+
+window.handleSearchInput = function() {
     const searchInput = document.getElementById('searchInput');
     const term = searchInput ? searchInput.value.trim() : '';
     const clearBtn = document.getElementById('searchClearBtn');
+
+    // Instant UI update for clear button - no lag while typing
     if (clearBtn) clearBtn.style.display = term.length > 0 ? 'block' : 'none';
 
-    // If currently in the YouTube / Watch Stream section, ONLY perform YouTube search!
+    // Cancel any pending search debounce timer
+    if (movieSearchDebounceTimer) {
+        clearTimeout(movieSearchDebounceTimer);
+        movieSearchDebounceTimer = null;
+    }
+
+    // If currently in the YouTube / Watch Stream section, debounce YouTube search
     if (isInCloudStreamView) {
         performCloudStreamSearch(term);
         return;
     }
 
     if (term === "") {
-        if (isPlayerView) {
-            destroyCurrentPlyr();
-            isPlayerView = false;
-            currentPlayingMovie = null;
-        }
-        isInCategoryView = false;
-        updateHeaderButton();
-        await renderContent(allMovies);
-    } else {
+        // Debounce restoring home view when cleared or backspaced
+        movieSearchDebounceTimer = setTimeout(async () => {
+            if (isPlayerView) {
+                destroyCurrentPlyr();
+                isPlayerView = false;
+                currentPlayingMovie = null;
+            }
+            isInCategoryView = false;
+            updateHeaderButton();
+            await renderContent(allMovies);
+        }, 120);
+        return;
+    }
+
+    // 200ms debounce keeps typing instant and smooth (60fps) without freezing main thread
+    movieSearchDebounceTimer = setTimeout(async () => {
         if (isPlayerView) {
             destroyCurrentPlyr();
             isPlayerView = false;
@@ -6353,23 +6405,42 @@ window.handleSearchInput = async function() {
         isInCategoryView = true;
         updateHeaderButton();
         await filterAndDisplay(term);
-    }
+    }, 200);
 };
 
 window.filterAndDisplay = async function(term, isExactCategory = false) {
     const container = document.getElementById('mainContainer');
     if (!container) return;
-    const lowerTerm = term.toLowerCase();
+
+    const thisRenderId = ++currentSearchRenderId;
+    const lowerTerm = term.toLowerCase().trim();
+
+    // Fast multi-token matching for intelligent search
+    const tokens = isExactCategory ? [lowerTerm] : lowerTerm.split(/\s+/).filter(Boolean);
 
     const filtered = allMovies.filter(m => {
+        if (!m) return false;
         if (isExactCategory) {
             return m.category && m.category.toLowerCase() === lowerTerm;
         }
-        return (m.title && m.title.toLowerCase().includes(lowerTerm)) || 
-            (m.name && m.name.toLowerCase().includes(lowerTerm)) ||
-            (m.category && m.category.toLowerCase().includes(lowerTerm)) ||
-            (m.cast && (typeof m.cast === 'string' ? m.cast.toLowerCase().includes(lowerTerm) : Array.isArray(m.cast) && m.cast.join(' ').toLowerCase().includes(lowerTerm)));
+        if (tokens.length === 0) return true;
+
+        const mTitle = (m.title || '').toLowerCase();
+        const mName = (m.name || '').toLowerCase();
+        const mCat = (m.category || '').toLowerCase();
+        const mCast = typeof m.cast === 'string' 
+            ? m.cast.toLowerCase() 
+            : (Array.isArray(m.cast) ? m.cast.join(' ').toLowerCase() : '');
+
+        return tokens.every(tok => 
+            mTitle.includes(tok) || 
+            mName.includes(tok) || 
+            mCat.includes(tok) || 
+            mCast.includes(tok)
+        );
     });
+
+    if (thisRenderId !== currentSearchRenderId) return;
 
     const displayTitle = isExactCategory ? `${term} (${filtered.length})` : `Results for "${term}" (${filtered.length})`;
 
@@ -6381,47 +6452,76 @@ window.filterAndDisplay = async function(term, isExactCategory = false) {
             </div>
         </div>
         <div class="gallery-grid" id="searchResultGrid"></div>
+        <div id="searchLoadMoreContainer" style="text-align: center; margin: 20px 0 35px; display: none;"></div>
     `;
 
     const grid = document.getElementById('searchResultGrid');
+    const loadMoreContainer = document.getElementById('searchLoadMoreContainer');
     if (!grid) return;
 
-    let postCount = 0;
-    for (const m of filtered) {
-        postCount++;
-        const card = document.createElement('div');
-        card.className = 'movie-card';
-        card.style.flex = "none";
-        card.style.minWidth = "unset";
-        card.onclick = () => window.openPlayer(m); 
-
-        const titleText = m.title || m.name || '';
-        const isLong = titleText.length > 18;
-
-        card.innerHTML = `
-            <span class="rating-badge">★ ${m.rating || '0.0'}</span>
-            <img src="${m.poster || m.image || ''}" loading="lazy" decoding="async">
-            <div class="movie-title-container">
-                <div class="movie-title ${isLong ? 'marquee-title' : ''}">${titleText}</div>
+    if (filtered.length === 0) {
+        grid.innerHTML = `
+            <div style="grid-column: 1 / -1; text-align: center; padding: 50px 20px; color: #8b949e;">
+                <i class="fa-solid fa-magnifying-glass" style="font-size: 38px; margin-bottom: 14px; opacity: 0.4; color: #00d2ff;"></i>
+                <p style="font-size: 16px; color: #fff; margin-bottom: 6px; font-weight: 600;">No results found for "${term}"</p>
+                <p style="font-size: 13px;">Please check spelling or try another keyword, actor or genre.</p>
             </div>
         `;
-        grid.appendChild(card);
+        return;
+    }
 
-        // Show 300x250 ad after every 36 posts; lazy loads when user scrolls near it (Non-VIP only)
-        if (!window.__isVipSubscribed && postCount % 36 === 0) {
-            const adSlot = createAd300x250Element(true);
-            adSlot.classList.add('ad-slot-grid-span');
-            grid.appendChild(adSlot);
+    const BATCH_SIZE = 40;
+    let renderedCount = 0;
+
+    function renderNextBatch() {
+        if (thisRenderId !== currentSearchRenderId) return;
+        const fragment = document.createDocumentFragment();
+        const nextBatch = filtered.slice(renderedCount, renderedCount + BATCH_SIZE);
+
+        for (let i = 0; i < nextBatch.length; i++) {
+            const m = nextBatch[i];
+            const currentItemIndex = renderedCount + i + 1;
+            const card = createSearchMovieCard(m);
+            fragment.appendChild(card);
+
+            // Show 300x250 ad after every 36 posts; lazy loads when user scrolls near it (Non-VIP only)
+            if (!window.__isVipSubscribed && currentItemIndex % 36 === 0) {
+                const adSlot = createAd300x250Element(true);
+                adSlot.classList.add('ad-slot-grid-span');
+                fragment.appendChild(adSlot);
+            }
         }
 
-        if (m.poster) {
-            getImage(m.poster).then(imgUrl => {
-                if (imgUrl) {
-                    const img = card.querySelector('img');
-                    if (img) img.src = imgUrl;
-                }
-            }).catch(() => {});
+        grid.appendChild(fragment);
+        renderedCount += nextBatch.length;
+
+        if (loadMoreContainer) {
+            if (renderedCount < filtered.length) {
+                loadMoreContainer.style.display = 'block';
+                loadMoreContainer.innerHTML = `
+                    <button type="button" id="loadMoreSearchBtn" style="background: linear-gradient(135deg, #00d2ff, #0077b6); color: #000; font-weight: 700; border: none; padding: 10px 24px; border-radius: 20px; font-size: 13px; cursor: pointer; box-shadow: 0 4px 15px rgba(0,210,255,0.3); transition: transform 0.15s ease;">
+                        <i class="fa-solid fa-angles-down" style="margin-right: 6px;"></i> Load More (${renderedCount} of ${filtered.length})
+                    </button>
+                `;
+                const btn = document.getElementById('loadMoreSearchBtn');
+                if (btn) btn.onclick = () => renderNextBatch();
+            } else {
+                loadMoreContainer.style.display = 'none';
+                loadMoreContainer.innerHTML = '';
+            }
         }
+    }
+
+    renderNextBatch();
+
+    // Auto-load on scroll near bottom using IntersectionObserver
+    if (loadMoreContainer && window.IntersectionObserver) {
+        const observer = new IntersectionObserver((entries) => {
+            if (entries[0] && entries[0].isIntersecting && renderedCount < filtered.length) {
+                renderNextBatch();
+            }
+        }, { rootMargin: '300px' });
+        observer.observe(loadMoreContainer);
     }
 };
 
@@ -6488,9 +6588,11 @@ window.displayMoviesByCast = async function(actorName) {
             </div>
         </div>
         <div class="gallery-grid" id="searchResultGrid"></div>
+        <div id="castLoadMoreContainer" style="text-align: center; margin: 20px 0 35px; display: none;"></div>
     `;
 
     const grid = document.getElementById('searchResultGrid');
+    const loadMoreContainer = document.getElementById('castLoadMoreContainer');
     if (!grid) return;
 
     if (filtered.length === 0) {
@@ -6504,42 +6606,56 @@ window.displayMoviesByCast = async function(actorName) {
         return;
     }
 
-    let postCount = 0;
-    for (const m of filtered) {
-        postCount++;
-        const card = document.createElement('div');
-        card.className = 'movie-card';
-        card.style.flex = "none";
-        card.style.minWidth = "unset";
-        card.onclick = () => window.openPlayer(m); 
+    const BATCH_SIZE = 40;
+    let renderedCount = 0;
 
-        const titleText = m.title || m.name || '';
-        const isLong = titleText.length > 18;
+    function renderNextBatch() {
+        const fragment = document.createDocumentFragment();
+        const nextBatch = filtered.slice(renderedCount, renderedCount + BATCH_SIZE);
 
-        card.innerHTML = `
-            <span class="rating-badge">★ ${m.rating || '0.0'}</span>
-            <img src="${m.poster || m.image || ''}" loading="lazy" decoding="async">
-            <div class="movie-title-container">
-                <div class="movie-title ${isLong ? 'marquee-title' : ''}">${titleText}</div>
-            </div>
-        `;
-        grid.appendChild(card);
+        for (let i = 0; i < nextBatch.length; i++) {
+            const m = nextBatch[i];
+            const currentItemIndex = renderedCount + i + 1;
+            const card = createSearchMovieCard(m);
+            fragment.appendChild(card);
 
-        // Show 300x250 ad after every 36 posts (Non-VIP only)
-        if (!window.__isVipSubscribed && postCount % 36 === 0) {
-            const adSlot = createAd300x250Element(true);
-            adSlot.classList.add('ad-slot-grid-span');
-            grid.appendChild(adSlot);
+            // Show 300x250 ad after every 36 posts (Non-VIP only)
+            if (!window.__isVipSubscribed && currentItemIndex % 36 === 0) {
+                const adSlot = createAd300x250Element(true);
+                adSlot.classList.add('ad-slot-grid-span');
+                fragment.appendChild(adSlot);
+            }
         }
 
-        if (m.poster) {
-            getImage(m.poster).then(imgUrl => {
-                if (imgUrl) {
-                    const img = card.querySelector('img');
-                    if (img) img.src = imgUrl;
-                }
-            }).catch(() => {});
+        grid.appendChild(fragment);
+        renderedCount += nextBatch.length;
+
+        if (loadMoreContainer) {
+            if (renderedCount < filtered.length) {
+                loadMoreContainer.style.display = 'block';
+                loadMoreContainer.innerHTML = `
+                    <button type="button" id="loadMoreCastBtn" style="background: linear-gradient(135deg, #00d2ff, #0077b6); color: #000; font-weight: 700; border: none; padding: 10px 24px; border-radius: 20px; font-size: 13px; cursor: pointer; box-shadow: 0 4px 15px rgba(0,210,255,0.3); transition: transform 0.15s ease;">
+                        <i class="fa-solid fa-angles-down" style="margin-right: 6px;"></i> Load More (${renderedCount} of ${filtered.length})
+                    </button>
+                `;
+                const btn = document.getElementById('loadMoreCastBtn');
+                if (btn) btn.onclick = () => renderNextBatch();
+            } else {
+                loadMoreContainer.style.display = 'none';
+                loadMoreContainer.innerHTML = '';
+            }
         }
+    }
+
+    renderNextBatch();
+
+    if (loadMoreContainer && window.IntersectionObserver) {
+        const observer = new IntersectionObserver((entries) => {
+            if (entries[0] && entries[0].isIntersecting && renderedCount < filtered.length) {
+                renderNextBatch();
+            }
+        }, { rootMargin: '300px' });
+        observer.observe(loadMoreContainer);
     }
 };
 

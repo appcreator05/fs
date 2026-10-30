@@ -4876,12 +4876,6 @@ function renderPlayerSection(movie, activeServerIndex = 0, preserveFullscreen = 
                                     <button type="button" class="exo-btn" onclick="window.toggleExoSettings(event);" title="Playback Speed & Settings">
                                         <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>
                                     </button>
-                                    ${window.Android && typeof window.Android.playInExoPlayer === 'function' ? `
-                                        <button type="button" class="exo-btn exo-native-btn" data-url="${encodeURIComponent(activeServer.url || '')}" data-title="${encodeURIComponent(movie.title || movie.name || '')}" onclick="window.launchNativeExoPlayer(decodeURIComponent(this.dataset.url), decodeURIComponent(this.dataset.title));" title="Play in Native ExoPlayer (Hardware Accelerated)" style="background: linear-gradient(135deg, #00c853, #009624); color: #fff; font-weight: 700; border: none; padding: 4px 10px; border-radius: 8px; display: inline-flex; align-items: center; gap: 5px; box-shadow: 0 2px 8px rgba(0,200,83,0.35);">
-                                            <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor"><path d="M7 2v11h3v9l7-12h-4l4-8z"/></svg>
-                                            <span>ExoPlayer HD</span>
-                                        </button>
-                                    ` : ''}
                                 </div>
                             </div>
 
@@ -4981,15 +4975,7 @@ function renderPlayerSection(movie, activeServerIndex = 0, preserveFullscreen = 
                 `}
             </div>
 
-            ${window.Android && typeof window.Android.playInExoPlayer === 'function' ? `
-            <!-- Native Android ExoPlayer Direct Stream Launch Button -->
-            <div style="margin: 10px 0 14px 0;">
-                <button type="button" class="native-exoplayer-launch-bar" data-url="${encodeURIComponent(activeServer.url || '')}" data-title="${encodeURIComponent(movie.title || movie.name || '')}" onclick="window.launchNativeExoPlayer(decodeURIComponent(this.dataset.url), decodeURIComponent(this.dataset.title));" style="width: 100%; background: linear-gradient(135deg, #00c853, #007e33); color: #fff; font-weight: bold; font-size: 13.5px; border: none; padding: 11px 16px; border-radius: 10px; display: flex; align-items: center; justify-content: center; gap: 8px; cursor: pointer; box-shadow: 0 4px 15px rgba(0,200,83,0.35);">
-                    <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z"/></svg>
-                    Play in Native ExoPlayer (Ultra Smooth HD)
-                </button>
-            </div>
-            ` : ''}
+
 
 
             ${movie.episodes && movie.episodes.length > 0 ? `

@@ -201,6 +201,24 @@ export default function App() {
     return () => clearInterval(timer);
   }, []);
 
+  // Social Bar Ad integration (https://bancadeltempoidea.org/14/c9fd2030fb41d4e246e405de8ee03d53)
+  useEffect(() => {
+    if (isSubscribed) {
+      const existingScript = document.querySelector('script[src*="bancadeltempoidea.org"]');
+      if (existingScript) existingScript.remove();
+      return;
+    }
+    const SCRIPT_URL = 'https://bancadeltempoidea.org/14/c9fd2030fb41d4e246e405de8ee03d53';
+    let script = document.querySelector(`script[src="${SCRIPT_URL}"]`) as HTMLScriptElement | null;
+    if (!script) {
+      script = document.createElement('script');
+      script.setAttribute('data-cfasync', 'false');
+      script.src = SCRIPT_URL;
+      script.async = true;
+      document.head.appendChild(script);
+    }
+  }, [isSubscribed]);
+
   // Configuration for Start.io ads (Real App ID: 208187630, Package: com.plexapp.android)
   const [startIoConfig, setStartIoConfig] = useState<StartIoConfig>(() => {
     const defaultConf: StartIoConfig = {
@@ -425,6 +443,18 @@ export default function App() {
     };
   }, []);
 
+  // 10-minute Periodic Native Banner Interstitial Ad (15s skip system)
+  useEffect(() => {
+    if (isSubscribed) return;
+    const TEN_MINUTES_MS = 10 * 60 * 1000;
+    const timer = setInterval(() => {
+      if (!isSubscribedRef.current) {
+        setShowPeriodicInterstitial(true);
+      }
+    }, TEN_MINUTES_MS);
+    return () => clearInterval(timer);
+  }, [isSubscribed]);
+
   // Periodic check (Disabled popunder/smartlink in favor of Start.io Rewarded Ads on play)
   useEffect(() => {
     // Popunder ads removed in favor of Start.io Rewarded Video Ads
@@ -603,17 +633,23 @@ export default function App() {
   const handleMoviePosterClick = (movie: Movie) => {
     setClickedMovieId(movie.id);
 
-    // If user is not subscribed, movies can still be watched with ads.
-    // Subscription is optional to remove all ads (VIP experience).
+    // If user is not VIP subscribed, show the Native Banner interstitial ad with 15s skip countdown
+    if (!isSubscribed) {
+      setInterstitialPendingMovie(movie);
+      setShowPeriodicInterstitial(true);
+      return;
+    }
+
     setClickedMovieId(null);
     triggerPageTransition(() => {
       setSelectedMovie(movie);
-    }, isSubscribed ? 'Starting VIP Ad-Free Stream...' : 'Starting Movie Stream...');
+    }, 'Starting VIP Ad-Free Stream...');
   };
 
   // Called when interstitial ad completes / skipped / closed
   const handleInterstitialComplete = () => {
     setClickedMovieId(null);
+    setShowPeriodicInterstitial(false);
     if (interstitialPendingMovie) {
       const nextMovie = interstitialPendingMovie;
       setInterstitialPendingMovie(null);
@@ -873,15 +909,17 @@ export default function App() {
         onTestInterstitial={handleTestInterstitial}
       />
 
-      {/* Start.io Rewarded Video Ad Modal (Triggers on Movie Poster Click to Unlock HD Stream - Blocked if Subscribed) */}
-      {!isSubscribed && interstitialPendingMovie && (
-        <StartIoRewardedVideoAd
-          movie={interstitialPendingMovie}
-          onCloseAndPlay={handleInterstitialComplete}
-          skipCountdownSeconds={startIoConfig.interstitialSkipCountdown}
-          onAdClick={recordAdClick}
-          onAdImpression={recordInterstitialImpression}
-          customAdUrl={startIoConfig.customAdUrl}
+      {/* Native Banner Interstitial Ad Modal (Every 10 minutes & on Post Click with 15s Skip Countdown) */}
+      {!isSubscribed && (showPeriodicInterstitial || !!interstitialPendingMovie) && (
+        <SmartlinkInterstitialAd
+          isOpen={showPeriodicInterstitial || !!interstitialPendingMovie}
+          onClose={handleInterstitialComplete}
+          wasFullscreen={isPlayerFullscreen}
+          onOpenSubscription={() => {
+            setShowPeriodicInterstitial(false);
+            setInterstitialPendingMovie(null);
+            setIsSubscriptionView(true);
+          }}
         />
       )}
 

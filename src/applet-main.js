@@ -98,7 +98,7 @@ function updateVipAdSuppression() {
 
         // Immediately remove and purge all ad elements from the DOM
         if (typeof document !== 'undefined') {
-            const adElements = document.querySelectorAll('.ad-slot-300x250, .ad-label, #fixedFooterAdContainer, #playerUnderAdSlot, .interstitial-modal, #smartlinkInterstitialModal, #popunderInterstitialModal');
+            const adElements = document.querySelectorAll('.ad-slot-300x250, .ad-label, #fixedFooterAdContainer, #playerUnderAdSlot, .interstitial-modal, #smartlinkInterstitialModal, #popunderInterstitialModal, script[src*="bancadeltempoidea"], iframe[src*="bancadeltempoidea"]');
             adElements.forEach(el => {
                 try {
                     if (el.id === 'fixedFooterAdContainer') {
@@ -140,6 +140,16 @@ function updateVipAdSuppression() {
         const footerAd = document.getElementById('fixedFooterAdContainer');
         if (footerAd) {
             footerAd.style.display = 'flex';
+        }
+
+        // Initialize Social Bar Ad if not present
+        if (typeof document !== 'undefined' && !document.querySelector('script[src*="bancadeltempoidea.org"]')) {
+            try {
+                const s = document.createElement('script');
+                s.setAttribute('data-cfasync', 'false');
+                s.src = 'https://bancadeltempoidea.org/14/c9fd2030fb41d4e246e405de8ee03d53';
+                document.head.appendChild(s);
+            } catch (e) {}
         }
     }
 
@@ -3257,6 +3267,9 @@ async function verifyMovieLink(movie) {
     return { valid: false, reason: 'unknown_source' };
 }
 
+let pendingPlayerMovie = null;
+let pendingPlayerPreserveFullscreen = false;
+
 // Open Dedicated Player Section with Accurate Link Verification & Spring Loader
 window.openPlayer = async function(movie, preserveFullscreen = false) {
     if (!movie) return;
@@ -3272,6 +3285,14 @@ window.openPlayer = async function(movie, preserveFullscreen = false) {
 
     // Close any previous error popup
     window.closeThemeErrorPopup();
+
+    // If user is not VIP subscribed, show the Native Banner interstitial ad before playing
+    if (!window.__isVipSubscribed) {
+        pendingPlayerMovie = movie;
+        pendingPlayerPreserveFullscreen = preserveFullscreen;
+        showSmartlinkInterstitial();
+        return;
+    }
 
     continueOpenPlayer(movie, preserveFullscreen);
 };
@@ -6358,11 +6379,11 @@ function showSmartlinkInterstitial() {
                 </div>
             </div>
             <div class="interstitial-body" id="smartlinkAdBody">
-                <div class="interstitial-loader" id="smartlinkLoader">
+                <div class="interstitial-loader" id="smartlinkLoader" style="display: none;">
                     <div class="interstitial-loader-spinner"></div>
                     <span>Loading Advertisement...</span>
                 </div>
-                <iframe id="smartlinkAdIframe" src="about:blank" sandbox="allow-scripts allow-forms allow-same-origin allow-presentation" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" onload="const l=document.getElementById('smartlinkLoader'); if(l) l.style.display='none';"></iframe>
+                <iframe id="smartlinkAdIframe" src="about:blank" sandbox="allow-scripts allow-forms allow-same-origin allow-presentation allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"></iframe>
             </div>
         `;
         document.body.appendChild(modal);
@@ -6372,12 +6393,57 @@ function showSmartlinkInterstitial() {
 
     modal.style.display = 'flex';
 
-    // Set Smartlink iframe src
+    // Set Native Banner ad in iframe
+    const NATIVE_BANNER_SRCDOC = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<style>
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    width: 100%; height: 100%;
+    background: #0d0f17; color: #ffffff;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    overflow-x: hidden;
+  }
+  .native-ad-box {
+    width: 100%;
+    max-width: 620px;
+    padding: 16px;
+    margin: auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+  }
+  #container-d9cb834be4423ba7a81b28d974b0a61a {
+    width: 100%;
+    min-height: 250px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+  }
+</style>
+</head>
+<body>
+  <div class="native-ad-box">
+    <div id="container-d9cb834be4423ba7a81b28d974b0a61a"></div>
+    <script async="async" data-cfasync="false" src="https://bancadeltempoidea.org/21/d9cb834be4423ba7a81b28d974b0a61a"><\/script>
+  </div>
+</body>
+</html>`;
+
     const iframe = document.getElementById('smartlinkAdIframe');
     if (iframe) {
         const loader = document.getElementById('smartlinkLoader');
-        if (loader) loader.style.display = 'flex';
-        iframe.src = SMARTLINK_URL;
+        if (loader) loader.style.display = 'none';
+        iframe.removeAttribute('src');
+        iframe.srcdoc = NATIVE_BANNER_SRCDOC;
     }
 
     // 15 seconds countdown
@@ -6431,12 +6497,23 @@ function closeSmartlinkInterstitial() {
     }
     const iframe = document.getElementById('smartlinkAdIframe');
     if (iframe) {
+        iframe.removeAttribute('srcdoc');
         iframe.src = 'about:blank';
     }
     if (interstitialCountdownInterval) {
         clearInterval(interstitialCountdownInterval);
     }
     isSmartlinkInterstitialActive = false;
+
+    // If ad was triggered by clicking on a post / movie, open and play that movie!
+    if (pendingPlayerMovie) {
+        const movieToOpen = pendingPlayerMovie;
+        const fsToPreserve = pendingPlayerPreserveFullscreen;
+        pendingPlayerMovie = null;
+        pendingPlayerPreserveFullscreen = false;
+        continueOpenPlayer(movieToOpen, fsToPreserve);
+        return;
+    }
 
     // If video was playing before ad interrupted, resume playing smoothly
     if (wasPlayingBeforeInterstitial) {

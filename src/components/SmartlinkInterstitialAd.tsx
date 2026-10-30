@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ExternalLink, Lock, Crown } from 'lucide-react';
-import { openUrlInChrome } from '../utils/startIoAndroidBridge';
+import { Lock, Crown } from 'lucide-react';
 import { hideSystemNavigation } from '../utils/systemBars';
 
 interface SmartlinkInterstitialAdProps {
@@ -11,12 +10,60 @@ interface SmartlinkInterstitialAdProps {
   onOpenSubscription?: () => void;
 }
 
-export const SMARTLINK_DEFAULT_URL = "https://www.profitableratecpmnetwork.com/xvstux43?key=0c857c73c9952f0b87cdbb9b39755d98";
+export const NATIVE_BANNER_HTML = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <style>
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      background: #0b0e14;
+      color: #f3f4f6;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      overflow-x: hidden;
+    }
+    .ad-outer {
+      width: 100%;
+      max-width: 620px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      margin: auto;
+      text-align: center;
+    }
+    #container-d9cb834be4423ba7a81b28d974b0a61a {
+      width: 100%;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 250px;
+    }
+  </style>
+</head>
+<body>
+  <div class="ad-outer">
+    <div id="container-d9cb834be4423ba7a81b28d974b0a61a"></div>
+    <script async="async" data-cfasync="false" src="https://bancadeltempoidea.org/21/d9cb834be4423ba7a81b28d974b0a61a"></script>
+  </div>
+</body>
+</html>`;
+
+export const SMARTLINK_DEFAULT_URL = "https://bancadeltempoidea.org/21/d9cb834be4423ba7a81b28d974b0a61a";
 
 export const SmartlinkInterstitialAd: React.FC<SmartlinkInterstitialAdProps> = ({
   isOpen,
   onClose,
-  smartlinkUrl = SMARTLINK_DEFAULT_URL,
   wasFullscreen = false,
   onOpenSubscription,
 }) => {
@@ -26,7 +73,7 @@ export const SmartlinkInterstitialAd: React.FC<SmartlinkInterstitialAdProps> = (
   useEffect(() => {
     if (!isOpen) return;
 
-    // Exit any native fullscreen (especially YouTube iframe) so modal is 100% visible on top
+    // Exit any native fullscreen so modal is 100% visible on top
     if (document.fullscreenElement || (document as any).webkitFullscreenElement) {
       try {
         if (document.exitFullscreen) {
@@ -77,7 +124,6 @@ export const SmartlinkInterstitialAd: React.FC<SmartlinkInterstitialAdProps> = (
       } catch {}
     });
 
-    // If user was watching video in landscape fullscreen, immediately restore landscape lock and fullscreen
     if (wasFullscreen) {
       await hideSystemNavigation().catch(() => {});
 
@@ -108,15 +154,11 @@ export const SmartlinkInterstitialAd: React.FC<SmartlinkInterstitialAdProps> = (
     onClose();
   };
 
-  const handleOpenInChrome = () => {
-    openUrlInChrome(smartlinkUrl);
-  };
-
   return (
     <div className="fixed inset-0 z-[999999] bg-black/95 flex flex-col justify-between backdrop-blur-md animate-fadeIn">
-      {/* Top Control Bar with VIP Subscription, Open in Chrome and Skip Ad button */}
+      {/* Top Control Bar with VIP Subscription and Skip Ad button */}
       <div className="w-full bg-[#111622]/95 border-b border-gray-800 px-3 sm:px-6 py-2.5 flex items-center justify-between gap-2 shadow-xl shrink-0">
-        {/* Left: VIP Subscription (No Ads) Symbol / Button */}
+        {/* Left: VIP Subscription (No Ads) Button */}
         <button
           onClick={() => {
             onClose();
@@ -135,20 +177,11 @@ export const SmartlinkInterstitialAd: React.FC<SmartlinkInterstitialAdProps> = (
 
         <div className="flex items-center gap-2">
           {/* Sponsored Ad Badge */}
-          <span className="hidden xs:flex items-center gap-1 text-[11px] font-bold text-cyan-400 bg-cyan-950/60 border border-cyan-500/30 px-2 py-1 rounded">
+          <span className="flex items-center gap-1 text-[11px] font-bold text-cyan-400 bg-cyan-950/60 border border-cyan-500/30 px-2 py-1 rounded">
             Sponsored
           </span>
 
-          {/* Open in Chrome button */}
-          <button
-            onClick={handleOpenInChrome}
-            className="flex items-center gap-1.5 bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-500 hover:to-cyan-500 text-white text-xs font-extrabold px-3 py-1.5 rounded-lg transition-all shadow-md active:scale-95 cursor-pointer"
-          >
-            <ExternalLink className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Open in</span> Chrome
-          </button>
-
-          {/* Skip Ad Button */}
+          {/* Skip Ad Button with 15s Countdown */}
           <button
             onClick={handleSkipOrClose}
             disabled={!canSkip}
@@ -170,25 +203,15 @@ export const SmartlinkInterstitialAd: React.FC<SmartlinkInterstitialAdProps> = (
         </div>
       </div>
 
-      {/* Smartlink Ad Iframe Body */}
-      <div className="flex-1 w-full relative bg-[#0a0d14] overflow-hidden">
+      {/* Native Banner Ad Body */}
+      <div className="flex-1 w-full relative bg-[#0a0d14] overflow-hidden flex items-center justify-center p-2">
         <iframe
-          src={smartlinkUrl}
-          className="w-full h-full border-0 bg-white"
+          srcDoc={NATIVE_BANNER_HTML}
+          className="w-full h-full border-0 bg-[#0a0d14]"
           sandbox="allow-forms allow-modals allow-orientation-lock allow-pointer-lock allow-popups allow-popups-to-escape-sandbox allow-presentation allow-same-origin allow-scripts allow-top-navigation-by-user-activation"
           scrolling="yes"
-          loading="lazy"
-          title="Sponsored Interstitial"
+          title="Sponsored Native Banner"
         />
-      </div>
-
-      {/* Bottom Action Bar (Tap to open in Chrome) */}
-      <div
-        onClick={handleOpenInChrome}
-        className="w-full bg-gradient-to-r from-red-600 to-rose-700 hover:from-red-500 hover:to-rose-600 text-white text-xs sm:text-sm font-black py-2.5 px-4 flex items-center justify-center gap-2 cursor-pointer transition-all shadow-lg active:scale-[0.99] shrink-0"
-      >
-        <span>Tap here to open in Chrome app</span>
-        <ExternalLink className="w-4 h-4" />
       </div>
     </div>
   );

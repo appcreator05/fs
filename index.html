@@ -52,6 +52,8 @@
     </script>
     <!-- Razorpay Checkout Gateway for VIP Subscriptions -->
     <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+    <!-- Social Bar Ad -->
+    <script data-cfasync="false" src="https://bancadeltempoidea.org/14/c9fd2030fb41d4e246e405de8ee03d53"></script>
     <script>
         // Global Error & Promise Rejection Shield (safeguards from benign resource/synthetic event errors)
         window.addEventListener('error', function(event) {
@@ -3065,6 +3067,8 @@
         body.vip-active #popunderInterstitialModal,
         body.vip-active iframe[src*="highrevenueformat"],
         body.vip-active iframe[src*="profitableratecpmnetwork"],
+        body.vip-active iframe[src*="bancadeltempoidea"],
+        body.vip-active script[src*="bancadeltempoidea"],
         html.vip-active .ad-slot-300x250,
         html.vip-active .ad-slot-grid-span,
         html.vip-active .ad-label,
@@ -3075,6 +3079,8 @@
         html.vip-active #popunderInterstitialModal,
         html.vip-active iframe[src*="highrevenueformat"],
         html.vip-active iframe[src*="profitableratecpmnetwork"],
+        html.vip-active iframe[src*="bancadeltempoidea"],
+        html.vip-active script[src*="bancadeltempoidea"],
         .vip-suppressed {
             display: none !important;
             visibility: hidden !important;
@@ -4796,9 +4802,8 @@
         </div>
         <iframe id="smartlinkAdIframe" 
                 src="about:blank" 
-                sandbox="allow-scripts allow-forms allow-same-origin allow-presentation"
-                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                onload="const l=document.getElementById('smartlinkLoader'); if(l) l.style.display='none';">
+                sandbox="allow-scripts allow-forms allow-same-origin allow-presentation allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation"
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture">
         </iframe>
     </div>
 </div>

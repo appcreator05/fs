@@ -493,6 +493,37 @@ async function getImage(url) {
     return await saveImage(url);
 }
 
+// ==================== APP SESSION MOVIE RANDOMIZER ====================
+// Randomizes the movie posts ONCE when the app is opened/launched.
+// The randomized order remains strictly stable across page navigation within the session.
+// Every time the user opens the app afresh, a new random arrangement is generated.
+const sessionMovieRandomMap = new Map();
+
+function getSessionMovieKey(m) {
+    if (!m) return '';
+    return (m.id ? String(m.id) : '') + '::' + String(m.title || m.name || '').trim().toLowerCase();
+}
+
+function randomizeMoviesForAppSession(list) {
+    if (!Array.isArray(list) || list.length === 0) return [];
+
+    // Assign stable random score for each movie in this app session
+    for (let i = 0; i < list.length; i++) {
+        const key = getSessionMovieKey(list[i]);
+        if (key && !sessionMovieRandomMap.has(key)) {
+            sessionMovieRandomMap.set(key, Math.random());
+        }
+    }
+
+    // Return a new array sorted by the session's random scores
+    return [...list].sort((a, b) => {
+        const scoreA = sessionMovieRandomMap.get(getSessionMovieKey(a)) || 0;
+        const scoreB = sessionMovieRandomMap.get(getSessionMovieKey(b)) || 0;
+        return scoreA - scoreB;
+    });
+}
+window.randomizeMoviesForAppSession = randomizeMoviesForAppSession;
+
 let allMovies = [];
 let isInCategoryView = false;
 let isPlayerView = false;
@@ -599,13 +630,13 @@ async function syncMoviesFromGitHub(isManual = false) {
                 );
                 const hasChanged = (countDiff !== 0) || isFirstDiff || isLastDiff || isManual;
 
-                allMovies = freshMovies;
+                allMovies = randomizeMoviesForAppSession(freshMovies);
                 saveMoviesToDB(freshMovies);
 
                 if (hasChanged) {
                     if (!isPlayerView) {
                         if (isInCategoryView) {
-                            renderCategoryView(currentCategoryName);
+                            filterAndDisplay(currentCategoryName, true);
                         } else {
                             await renderContent(allMovies);
                         }
@@ -670,7 +701,7 @@ async function fetchMovies() {
         }
 
         if (initialMovies && Array.isArray(initialMovies) && initialMovies.length > 0) {
-            allMovies = initialMovies;
+            allMovies = randomizeMoviesForAppSession(initialMovies);
             hasLoadedAndRendered = true;
             if (!checkInitialRoute()) {
                 await renderContent(allMovies);
@@ -685,7 +716,7 @@ async function fetchMovies() {
     } catch (err) {
         console.warn("Error in fetchMovies:", err);
         if (!hasLoadedAndRendered && BUNDLED_CATALOG && BUNDLED_CATALOG.length > 0) {
-            allMovies = BUNDLED_CATALOG;
+            allMovies = randomizeMoviesForAppSession(BUNDLED_CATALOG);
             if (!checkInitialRoute()) {
                 await renderContent(allMovies);
             }
@@ -5713,7 +5744,13 @@ async function renderContent(movies) {
         container.appendChild(wcDiv);
     }
 
-    const categories = [...new Set(movies.map(m => m.category).filter(Boolean))];
+    // Extract unique categories, preserving natural catalog order for category headers
+    const defaultCatOrder = [...new Set((BUNDLED_CATALOG || []).map(m => m.category).filter(Boolean))];
+    const currentCatSet = [...new Set(movies.map(m => m.category).filter(Boolean))];
+    const categories = [
+        ...defaultCatOrder.filter(c => currentCatSet.includes(c)),
+        ...currentCatSet.filter(c => !defaultCatOrder.includes(c))
+    ];
 
     let renderedCatCount = 0;
     for (const cat of categories) {

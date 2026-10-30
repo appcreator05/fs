@@ -89,9 +89,15 @@ export default function App() {
   const [showExitToast, setShowExitToast] = useState(false);
   const backPressCountRef = useRef(0);
 
-  // Movie database state (strictly movies only, no music albums)
+  // Movie database state (strictly movies only, randomized once on app launch)
   const [movies, setMovies] = useState<Movie[]>(() => {
-    return SEED_CATALOG_MOVIES.filter((m) => !isMusicItem(m));
+    const list = SEED_CATALOG_MOVIES.filter((m) => !isMusicItem(m));
+    const shuffled = [...list];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    return shuffled;
   });
   const [jsonLoadedCount, setJsonLoadedCount] = useState<number | null>(null);
 
